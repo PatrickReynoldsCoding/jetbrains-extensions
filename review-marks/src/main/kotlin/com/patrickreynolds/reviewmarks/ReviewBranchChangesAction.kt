@@ -3,12 +3,9 @@ package com.patrickreynolds.reviewmarks
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
-import com.intellij.openapi.util.ThrowableComputable
 
 private const val ERROR_TITLE = "Review Branch Changes"
 
@@ -47,23 +44,12 @@ class ReviewBranchChangesAction : AnAction() {
     }
 
     private fun markChangesSince(project: Project, projectFolder: String, baseBranch: String) {
-        val result = ProgressManager.getInstance().runProcessWithProgressSynchronously(
-            ThrowableComputable<BranchChangesResult, RuntimeException> { GitBranchChanges.changedLinesSince(projectFolder, baseBranch) },
-            "Finding what changed since $baseBranch",
-            true,
-            project,
+        markChangedLinesToReviewWithProgress(
+            project = project,
+            dialogTitle = ERROR_TITLE,
+            progressTitle = "Finding what changed since $baseBranch",
+            doneMessage = "Marked the lines changed since $baseBranch to review.",
+            findChangedLines = { GitBranchChanges.changedLinesSince(projectFolder, baseBranch) },
         )
-        when (result) {
-            is BranchChangesResult.Failed ->
-                Messages.showErrorDialog(project, "${result.git.command}\n\n${result.git.errorOutput}", ERROR_TITLE)
-            is BranchChangesResult.Found -> {
-                val markedFileCount = project.service<ReviewMarksService>().markChangedLinesToReview(localFilesByPath(result.changedLinesByPath))
-                Messages.showInfoMessage(
-                    project,
-                    "Marked the lines changed since $baseBranch to review, in $markedFileCount files. Lines you had already marked were left as they were.",
-                    ERROR_TITLE,
-                )
-            }
-        }
     }
 }

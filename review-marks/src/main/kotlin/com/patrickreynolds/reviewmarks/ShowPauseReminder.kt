@@ -6,9 +6,9 @@ import com.intellij.openapi.project.Project
 
 private const val NOTIFICATION_GROUP_ID = "Review Marks"
 
-fun showPauseReminder(project: Project, reminder: PauseReminder) {
+fun showPauseReminder(project: Project, message: String) {
     NotificationGroupManager.getInstance()
         .getNotificationGroup(NOTIFICATION_GROUP_ID)
-        .createNotification("Review Marks", reminder.message(), NotificationType.INFORMATION)
+        .createNotification("Review Marks", message, NotificationType.INFORMATION)
         .notify(project)
 }

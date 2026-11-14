@@ -7,8 +7,11 @@ import com.intellij.openapi.components.Storage
 
 class ReviewMarksSettingsState {
     var pauseRemindersOn: Boolean = false
-    var minutesBetweenPauses: Int = 30
-    var blocksBetweenPauses: Int = 0
+    var workMinutes: Int = 25
+    var breakMinutes: Int = 5
+    var defaultBaseBranch: String = "main"
+
+    fun pomodoroLengths() = PomodoroLengths(workMinutes, breakMinutes)
 }
 
 @Service(Service.Level.APP)

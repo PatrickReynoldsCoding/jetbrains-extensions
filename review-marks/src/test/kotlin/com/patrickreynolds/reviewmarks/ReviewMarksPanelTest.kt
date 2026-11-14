@@ -7,6 +7,10 @@ import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.ui.UIUtil
+import com.intellij.openapi.actionSystem.ActionGroup
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.Separator
+import com.intellij.openapi.actionSystem.impl.ActionToolbarImpl
 import javax.swing.JButton
 import javax.swing.tree.DefaultMutableTreeNode
 
@@ -39,7 +43,7 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
 
     fun `test the panel has the four tabs and counts the notes in the notes tab title`() {
         myFixture.configureByText("Example.txt", documentText)
-        reviewMarks().setNoteAt(myFixture.editor.document, 0, NoteDetails("ask Sam", floating = false, includeInPullRequest = true))
+        reviewMarks().setNoteAt(myFixture.editor.document, 0, NoteDetails("ask Sam", floating = false, kind = NoteKind.PR_COMMENT))
 
         val panel = ReviewMarksPanel(project, testRootDisposable)
 
@@ -95,14 +99,14 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
         assertEquals(emptyList<String>(), checkBoxes.map { it.text }.filter { it.contains("Fade") })
     }
 
-    fun `test the pause check box shows the saved reminder setting`() {
+    fun `test the pomodoro check box shows the saved reminder setting`() {
         val pauseSettings = service<ReviewMarksSettings>().state
         val previouslyOn = pauseSettings.pauseRemindersOn
         try {
             pauseSettings.pauseRemindersOn = true
             val panel = openPanelWithLinesTwoToFourToReview()
 
-            val pauseCheckBox = UIUtil.findComponentsOfType(panel, JBCheckBox::class.java).first { it.text == "Remind me to pause" }
+            val pauseCheckBox = UIUtil.findComponentsOfType(panel, JBCheckBox::class.java).first { it.text == "Pomodoro breaks" }
 
             assertTrue(pauseCheckBox.isSelected)
         } finally {
@@ -129,9 +133,48 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
         assertFalse(isVisibleInPanel(postReviewButton))
     }
 
-    fun `test the panel has the branch and pull request buttons`() {
-        val panel = openPanelWithLinesTwoToFourToReview()
-        val buttonLabels = buttonsOf(panel).map { it.text }
-        assertTrue(buttonLabels.containsAll(listOf("To review", "Reviewed", "Reviewed & next", "Clear", "Branch…", "PR review…")))
+    fun `test the toolbar has the daily actions and the review from git menu with its four actions`() {
+        val toolbarActionIds = flattenedActionIds(ActionManager.getInstance().getAction("ReviewMarks.Toolbar") as ActionGroup)
+
+        assertEquals(
+            listOf(
+                "ReviewMarks.MarkAsToReview",
+                "ReviewMarks.MarkSelectionAsReviewed",
+                "ReviewMarks.MarkAndGoToNext",
+                "ReviewMarks.ClearReviewedMark",
+                "ReviewMarks.GoToNextRunToReview",
+                "ReviewMarks.GoBackToLastStop",
+                "ReviewMarks.AddOrEditNote",
+                "ReviewMarks.FromGitMenu",
+            ),
+            toolbarActionIds,
+        )
+        val fromGitActionIds = flattenedActionIds(ActionManager.getInstance().getAction("ReviewMarks.FromGitMenu") as ActionGroup)
+        assertEquals(
+            listOf(
+                "ReviewMarks.MarkBranchChanges",
+                "ReviewMarks.MarkUncommittedChanges",
+                "ReviewMarks.ReviewBranchChanges",
+                "ReviewMarks.StartPullRequestReview",
+            ),
+            fromGitActionIds,
+        )
     }
+
+    fun `test every toolbar action has an icon because the toolbar shows icons only`() {
+        val toolbar = ActionManager.getInstance().getAction("ReviewMarks.Toolbar") as ActionGroup
+        val actionsWithoutIcon = flattenedActionIds(toolbar)
+            .filter { ActionManager.getInstance().getAction(it).templatePresentation.icon == null }
+
+        assertEquals(emptyList<String>(), actionsWithoutIcon)
+    }
+
+    fun `test the panel shows the toolbar`() {
+        val panel = openPanelWithLinesTwoToFourToReview()
+
+        assertTrue(UIUtil.findComponentsOfType(panel, ActionToolbarImpl::class.java).isNotEmpty())
+    }
+
+    private fun flattenedActionIds(group: ActionGroup): List<String> =
+        group.getChildren(null).filter { it !is Separator }.map { ActionManager.getInstance().getId(it)!! }
 }

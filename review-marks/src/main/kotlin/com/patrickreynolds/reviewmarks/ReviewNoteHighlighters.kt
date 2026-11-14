@@ -20,11 +20,11 @@ private val NOTE_DETAILS = Key.create<NoteDetails>("reviewmarks.noteDetails")
 data class NoteDetails(
     val text: String,
     val floating: Boolean,
-    val includeInPullRequest: Boolean,
+    val kind: NoteKind,
 )
 
 data class ReviewNote(val highlighter: RangeHighlighter) {
-    val details: NoteDetails get() = highlighter.getUserData(NOTE_DETAILS) ?: NoteDetails("", floating = false, includeInPullRequest = true)
+    val details: NoteDetails get() = highlighter.getUserData(NOTE_DETAILS) ?: NoteDetails("", floating = false, kind = NoteKind.NOTE)
     val text: String get() = details.text
     val range: TextRange get() = TextRange(highlighter.startOffset, highlighter.endOffset)
 }
@@ -60,13 +60,19 @@ object ReviewNoteHighlighters {
     }
 }
 
+private val ICON_BY_KIND: Map<NoteKind, Icon> = mapOf(
+    NoteKind.NOTE to AllIcons.General.Balloon,
+    NoteKind.PR_COMMENT to AllIcons.Vcs.Branch,
+    NoteKind.AGENT_NOTE to AllIcons.Actions.Lightning,
+)
+
 private class NoteGutterIcon(
     private val project: Project,
     private val document: Document,
     private val highlighter: RangeHighlighter,
 ) : GutterIconRenderer() {
 
-    override fun getIcon(): Icon = AllIcons.General.Balloon
+    override fun getIcon(): Icon = ICON_BY_KIND.getValue(highlighter.getUserData(NOTE_DETAILS)?.kind ?: NoteKind.NOTE)
 
     override fun getTooltipText(): String? = highlighter.getUserData(NOTE_DETAILS)?.text
 

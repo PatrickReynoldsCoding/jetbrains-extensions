@@ -8,6 +8,7 @@ import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.util.TextRange
+import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 
 class ReviewMarksServiceTest : BasePlatformTestCase() {
@@ -18,7 +19,7 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
     private val lineThreeEnd = lineThreeStart + "line three".length
     private val lineFourEnd = documentText.indexOf("line four") + "line four".length
 
-    private val plainNote = NoteDetails("ask Sam", floating = false, includeInPullRequest = true)
+    private val plainNote = NoteDetails("ask Sam", floating = false, kind = NoteKind.PR_COMMENT)
 
     private fun reviewMarks() = project.service<ReviewMarksService>()
 
@@ -408,25 +409,25 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
     fun `test saved state holds the notes with their options and listing them shows the notes of open files`() {
         myFixture.configureByText("Notes.txt", documentText)
         val document = myFixture.editor.document
-        reviewMarks().setNoteAt(document, lineThreeStart, NoteDetails("ask Sam", floating = true, includeInPullRequest = false))
+        reviewMarks().setNoteAt(document, lineThreeStart, NoteDetails("ask Sam", floating = true, kind = NoteKind.NOTE))
 
         val savedNotes = reviewMarks().state.notes
         val listedNotes = reviewMarks().allNotes()
 
-        assertEquals(listOf(StoredNote(myFixture.file.virtualFile.url, lineThreeStart, "line three", "ask Sam", true, false)), savedNotes)
+        assertEquals(listOf(StoredNote(myFixture.file.virtualFile.url, lineThreeStart, "line three", "ask Sam", true, NoteKind.NOTE.name)), savedNotes)
         assertEquals(savedNotes, listedNotes)
     }
 
     fun `test a saved note comes back with its options when the file is opened and its line is unchanged`() {
         val file = myFixture.addFileToProject("SavedNotes.txt", documentText).virtualFile
         reviewMarks().loadState(
-            ReviewMarksState(notes = mutableListOf(StoredNote(file.url, lineThreeStart, "line three", "ask Sam", floating = true, includeInPullRequest = false))),
+            ReviewMarksState(notes = mutableListOf(StoredNote(file.url, lineThreeStart, "line three", "ask Sam", floating = true, kind = NoteKind.NOTE.name))),
         )
 
         myFixture.openFileInEditor(file)
 
         val note = ReviewNoteHighlighters.inDocument(project, myFixture.editor.document).single()
-        assertEquals(NoteDetails("ask Sam", floating = true, includeInPullRequest = false), note.details)
+        assertEquals(NoteDetails("ask Sam", floating = true, kind = NoteKind.NOTE), note.details)
         assertEquals(TextRange(lineThreeStart, lineThreeEnd), note.range)
         assertEquals(1, floatingNoteInlayCount())
     }
@@ -470,36 +471,46 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
         assertEquals(listOf(3), reviewMarks().state.reviewLog.map { it.reviewedLineCount })
     }
 
-    fun `test a pause reminder appears after enough reviewed blocks when reminders are on`() {
+    fun `test the pomodoro timer shows a sticky reminder when the work period is over and another when the break is over`() {
         val pauseSettings = service<ReviewMarksSettings>().state
-        val previousSettings = Triple(pauseSettings.pauseRemindersOn, pauseSettings.minutesBetweenPauses, pauseSettings.blocksBetweenPauses)
+        val previousSettings = Triple(pauseSettings.pauseRemindersOn, pauseSettings.workMinutes, pauseSettings.breakMinutes)
         val shownNotifications = collectNotifications()
+        val timer = project.service<PomodoroTimer>()
+        val minute = 60_000L
         try {
             pauseSettings.pauseRemindersOn = true
-            pauseSettings.minutesBetweenPauses = 0
-            pauseSettings.blocksBetweenPauses = 2
-            myFixture.configureByText("Pause.txt", documentText)
-            val document = myFixture.editor.document
+            pauseSettings.workMinutes = 25
+            pauseSettings.breakMinutes = 5
 
-            reviewMarks().markRangeAsReviewed(document, TextRange(lineTwoStart, lineThreeEnd))
+            timer.checkNow(0)
+            timer.checkNow(24 * minute)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
             assertEquals(0, shownNotifications.size)
-            reviewMarks().markRangeAsReviewed(document, TextRange(lineThreeStart, lineFourEnd))
 
+            timer.checkNow(25 * minute)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
             assertEquals(1, shownNotifications.size)
-            assertTrue(shownNotifications.single().content.startsWith("You have reviewed 2 blocks"))
+            assertTrue(shownNotifications.single().content.startsWith("Time for a 5 minute break"))
+
+            timer.checkNow(30 * minute)
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
+            assertEquals(2, shownNotifications.size)
+            assertTrue(shownNotifications.last().content.startsWith("Break over"))
         } finally {
             pauseSettings.pauseRemindersOn = previousSettings.first
-            pauseSettings.minutesBetweenPauses = previousSettings.second
-            pauseSettings.blocksBetweenPauses = previousSettings.third
+            pauseSettings.workMinutes = previousSettings.second
+            pauseSettings.breakMinutes = previousSettings.third
+            timer.checkNow(0)
         }
     }
 
-    fun `test no pause reminder appears when reminders are off`() {
+    fun `test the pomodoro timer shows nothing when reminders are off`() {
         val shownNotifications = collectNotifications()
-        myFixture.configureByText("NoPause.txt", documentText)
-        val document = myFixture.editor.document
+        val timer = project.service<PomodoroTimer>()
 
-        repeat(5) { reviewMarks().markRangeAsReviewed(document, TextRange(lineTwoStart, lineThreeEnd)) }
+        timer.checkNow(0)
+        timer.checkNow(10_000 * 60_000L)
+        PlatformTestUtil.dispatchAllEventsInIdeEventQueue()
 
         assertEquals(0, shownNotifications.size)
     }
@@ -591,8 +602,8 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
         myFixture.configureByText("Example.txt", documentText)
         val document = myFixture.editor.document
         reviewMarks().startPullRequestReview(pullRequestSession(), emptyMap())
-        reviewMarks().setNoteAt(document, lineThreeStart, NoteDetails("Why retry here?", floating = false, includeInPullRequest = true))
-        reviewMarks().setNoteAt(document, lineTwoStart, NoteDetails("private reminder", floating = false, includeInPullRequest = false))
+        reviewMarks().setNoteAt(document, lineThreeStart, NoteDetails("Why retry here?", floating = false, kind = NoteKind.PR_COMMENT))
+        reviewMarks().setNoteAt(document, lineTwoStart, NoteDetails("private reminder", floating = false, kind = NoteKind.NOTE))
 
         val comments = reviewMarks().pullRequestComments()
 

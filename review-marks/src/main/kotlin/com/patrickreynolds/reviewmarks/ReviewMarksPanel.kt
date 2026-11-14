@@ -2,6 +2,7 @@ package com.patrickreynolds.reviewmarks
 
 import com.intellij.ide.DataManager
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.components.service
@@ -45,7 +46,14 @@ private const val NOTES_TAB = 2
 private const val TODAY_TAB = 3
 
 private const val ACTION_PLACE = "ReviewMarksToolWindow"
+private const val TOOLBAR_GROUP_ID = "ReviewMarks.Toolbar"
 private const val ANCHOR_PREVIEW_LENGTH = 60
+
+private val KIND_MARKER_BY_KIND = mapOf(
+    NoteKind.NOTE to "",
+    NoteKind.PR_COMMENT to "💬 ",
+    NoteKind.AGENT_NOTE to "🤖 ",
+)
 
 class ReviewMarksPanel(
     private val project: Project,
@@ -68,7 +76,7 @@ class ReviewMarksPanel(
     private val notesModel = CollectionListModel<StoredNote>()
     private val notesList = JBList(notesModel)
     private val todayText = JBTextArea()
-    private val pauseCheckBox = JBCheckBox("Remind me to pause")
+    private val pauseCheckBox = JBCheckBox("Pomodoro breaks")
     private val pauseLimitsLabel = JBLabel()
 
     private var refreshingFromState = false
@@ -87,7 +95,7 @@ class ReviewMarksPanel(
             foldCheckBox.isSelected = reviewMarks.foldMode
             refreshPullRequestBanner()
             pauseCheckBox.isSelected = pauseSettings.pauseRemindersOn
-            pauseLimitsLabel.text = pauseLimitsText(pauseSettings.minutesBetweenPauses, pauseSettings.blocksBetweenPauses)
+            pauseLimitsLabel.text = pomodoroStatusText()
             refreshProgress()
             refreshNotesTabTitle()
             refreshSelectedTab()
@@ -100,21 +108,7 @@ class ReviewMarksPanel(
         val topPanel = JBPanel<JBPanel<*>>()
         topPanel.layout = BoxLayout(topPanel, BoxLayout.Y_AXIS)
         topPanel.border = JBUI.Borders.empty(4)
-        topPanel.add(buttonRow(
-            "To review" to "ReviewMarks.MarkAsToReview",
-            "Reviewed" to "ReviewMarks.MarkSelectionAsReviewed",
-            "Reviewed & next" to "ReviewMarks.MarkAndGoToNext",
-            "Clear" to "ReviewMarks.ClearReviewedMark",
-        ))
-        topPanel.add(buttonRow(
-            "Next" to "ReviewMarks.GoToNextRunToReview",
-            "Where I stopped" to "ReviewMarks.GoBackToLastStop",
-            "Note" to "ReviewMarks.AddOrEditNote",
-        ))
-        topPanel.add(buttonRow(
-            "Branch…" to "ReviewMarks.ReviewBranchChanges",
-            "PR review…" to "ReviewMarks.StartPullRequestReview",
-        ))
+        topPanel.add(createToolbar())
         topPanel.add(pullRequestRow)
         topPanel.add(checkBoxRow(foldCheckBox))
         topPanel.add(fileNameLabel)
@@ -138,14 +132,11 @@ class ReviewMarksPanel(
         return row
     }
 
-    private fun buttonRow(vararg buttonLabelsAndActionIds: Pair<String, String>): JBPanel<*> {
-        val row = JBPanel<JBPanel<*>>(FlowLayout(FlowLayout.LEFT, 4, 2))
-        buttonLabelsAndActionIds.forEach { (label, actionId) ->
-            val button = JButton(label)
-            button.addActionListener { runAction(actionId) }
-            row.add(button)
-        }
-        return row
+    private fun createToolbar(): JComponent {
+        val toolbarGroup = ActionManager.getInstance().getAction(TOOLBAR_GROUP_ID) as ActionGroup
+        val toolbar = ActionManager.getInstance().createActionToolbar(ACTION_PLACE, toolbarGroup, true)
+        toolbar.targetComponent = this
+        return toolbar.component
     }
 
     private fun checkBoxRow(vararg checkBoxes: JBCheckBox): JBPanel<*> {
@@ -200,8 +191,8 @@ class ReviewMarksPanel(
         notesList.emptyText.text = "No notes yet. Click Note, or right-click a line, Review Marks, Add or Edit Note."
         notesList.cellRenderer = SimpleListCellRenderer.create { label, note, _ ->
             val floatingMarker = if (note.floating) "▲ " else ""
-            val commentMarker = if (reviewMarks.pullRequest != null && note.includeInPullRequest) "💬 " else ""
-            label.text = "$floatingMarker$commentMarker${note.text.lineSequence().first()}   —   " +
+            val kindMarker = KIND_MARKER_BY_KIND.getValue(noteKindNamed(note.kind))
+            label.text = "$floatingMarker$kindMarker${note.text.lineSequence().first()}   —   " +
                 "${note.fileUrl.substringAfterLast('/')}: ${note.anchorText.take(ANCHOR_PREVIEW_LENGTH)}"
         }
         notesList.addMouseListener(object : MouseAdapter() {
@@ -253,6 +244,11 @@ class ReviewMarksPanel(
 
     private fun refreshIfShowing() {
         if (isShowing) refresh()
+    }
+
+    private fun pomodoroStatusText(): String {
+        val minutesLeftText = project.service<PomodoroTimer>().minutesLeftText(System.currentTimeMillis())
+        return minutesLeftText.ifEmpty { pomodoroLengthsText(pauseSettings.pomodoroLengths()) }
     }
 
     private fun refreshPullRequestBanner() {

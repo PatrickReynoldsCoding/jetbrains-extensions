@@ -22,4 +22,10 @@ object Git {
         }
         return GitOutput.Succeeded(output.stdout)
     }
+
+    fun repositoryRoot(workingFolder: String): GitOutput =
+        when (val output = run(workingFolder, "rev-parse", "--show-toplevel")) {
+            is GitOutput.Failed -> output
+            is GitOutput.Succeeded -> GitOutput.Succeeded(output.standardOutput.trim())
+        }
 }

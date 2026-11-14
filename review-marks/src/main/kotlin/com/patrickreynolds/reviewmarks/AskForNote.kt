@@ -6,7 +6,7 @@ import com.intellij.openapi.project.Project
 
 fun askForNoteAt(project: Project, document: Document, offset: Int) {
     val reviewMarks = project.service<ReviewMarksService>()
-    val dialog = NoteDialog(project, reviewMarks.noteDetailsAt(document, offset), reviewMarks.pullRequest != null)
+    val dialog = NoteDialog(project, reviewMarks.noteDetailsAt(document, offset))
     if (!dialog.showAndGet()) return
     reviewMarks.setNoteAt(document, offset, dialog.noteDetails())
 }

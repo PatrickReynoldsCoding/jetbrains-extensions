@@ -8,9 +8,9 @@ sealed interface BranchChangesResult {
 object GitBranchChanges {
 
     fun changedLinesSince(projectFolder: String, baseRef: String): BranchChangesResult {
-        val repositoryRoot = when (val output = Git.run(projectFolder, "rev-parse", "--show-toplevel")) {
+        val repositoryRoot = when (val output = Git.repositoryRoot(projectFolder)) {
             is GitOutput.Failed -> return BranchChangesResult.Failed(output.failure)
-            is GitOutput.Succeeded -> output.standardOutput.trim()
+            is GitOutput.Succeeded -> output.standardOutput
         }
         val commonAncestor = when (val output = Git.run(projectFolder, "merge-base", "HEAD", baseRef)) {
             is GitOutput.Failed -> return BranchChangesResult.Failed(output.failure)

@@ -13,7 +13,8 @@
                                  id="ReviewMarks.Settings"
                                  displayName="Review Marks"
                                  instance="com.patrickreynolds.reviewmarks.ReviewMarksConfigurable"/>
-        <notificationGroup id="Review Marks" displayType="BALLOON"/>
+        <notificationGroup id="Review Marks" displayType="STICKY_BALLOON"/>
+        <postStartupActivity implementation="com.patrickreynolds.reviewmarks.PomodoroStartup"/>
         <toolWindow id="Review Marks"
                     anchor="right"
                     icon="AllIcons.Actions.Checked"
@@ -24,10 +25,12 @@
 
     <actions>
         <action id="ReviewMarks.MarkAsToReview"
+                icon="AllIcons.Actions.Preview"
                 class="com.patrickreynolds.reviewmarks.MarkAsToReviewAction"
                 text="Mark Selection to Review"
                 description="Mark the selection (or the method or class at the caret) as code to review. It is listed in the To review tab."/>
         <action id="ReviewMarks.MarkSelectionAsReviewed"
+                icon="AllIcons.Actions.Checked"
                 class="com.patrickreynolds.reviewmarks.MarkSelectionAsReviewedAction"
                 text="Mark Selection as Reviewed"
                 description="Highlight the selected code as reviewed."/>
@@ -36,18 +39,22 @@
                 text="Mark Method or Class at Caret as Reviewed"
                 description="Mark the innermost multi-line method, class or other named declaration around the caret as reviewed."/>
         <action id="ReviewMarks.MarkAndGoToNext"
+                icon="AllIcons.Actions.Play_forward"
                 class="com.patrickreynolds.reviewmarks.MarkAndGoToNextAction"
                 text="Mark as Reviewed and Go to Next"
                 description="Mark the selection (or the method or class at the caret) as reviewed, then move to the next code to review."/>
         <action id="ReviewMarks.ClearReviewedMark"
+                icon="AllIcons.Actions.Cancel"
                 class="com.patrickreynolds.reviewmarks.ClearReviewedMarkAction"
                 text="Clear Mark at Caret"
                 description="Remove the mark under the caret."/>
         <action id="ReviewMarks.GoToNextRunToReview"
+                icon="AllIcons.Actions.NextOccurence"
                 class="com.patrickreynolds.reviewmarks.GoToNextRunToReviewAction"
                 text="Go to Next Code to Review"
                 description="Move the caret to the next code marked to review or changed since you reviewed it."/>
         <action id="ReviewMarks.GoBackToLastStop"
+                icon="AllIcons.Actions.Back"
                 class="com.patrickreynolds.reviewmarks.GoBackToLastStopAction"
                 text="Go Back to Where I Stopped"
                 description="Open the place where you last marked code as reviewed."/>
@@ -57,10 +64,22 @@
                 description="Fold reviewed code into a single line so that only code you have not read is on screen."/>
 
         <action id="ReviewMarks.ReviewBranchChanges"
+                icon="AllIcons.Vcs.Branch"
                 class="com.patrickreynolds.reviewmarks.ReviewBranchChangesAction"
                 text="Review Branch Changes..."
                 description="Pick a branch and mark the lines changed since you branched from it to review."/>
+        <action id="ReviewMarks.MarkBranchChanges"
+                icon="AllIcons.Vcs.Branch"
+                class="com.patrickreynolds.reviewmarks.MarkBranchChangesAction"
+                text="Mark All Branch Changes to Review"
+                description="Mark every line changed on this branch since the default branch (main unless you set another in Settings) to review."/>
+        <action id="ReviewMarks.MarkUncommittedChanges"
+                icon="AllIcons.Vcs.CommitNode"
+                class="com.patrickreynolds.reviewmarks.MarkUncommittedChangesAction"
+                text="Mark Uncommitted Changes to Review"
+                description="Mark every line that is not committed yet, including new files, to review."/>
         <action id="ReviewMarks.StartPullRequestReview"
+                icon="AllIcons.Vcs.Merge"
                 class="com.patrickreynolds.reviewmarks.StartPullRequestReviewAction"
                 text="Start PR Review..."
                 description="Find the GitHub pull request of the current branch and mark its changed lines to review. Your notes become review comments."/>
@@ -74,6 +93,7 @@
                 description="Stop the PR review without posting it."/>
 
         <action id="ReviewMarks.AddOrEditNote"
+                icon="AllIcons.General.Balloon"
                 class="com.patrickreynolds.reviewmarks.AddOrEditNoteAction"
                 text="Add or Edit Note on This Line..."
                 description="Park a note on this line. It can float above the code and, in a PR review, become a review comment."/>
@@ -97,11 +117,37 @@
             <separator/>
             <reference ref="ReviewMarks.ToggleFoldMode"/>
             <separator/>
+            <reference ref="ReviewMarks.MarkBranchChanges"/>
+            <reference ref="ReviewMarks.MarkUncommittedChanges"/>
             <reference ref="ReviewMarks.ReviewBranchChanges"/>
             <reference ref="ReviewMarks.StartPullRequestReview"/>
             <reference ref="ReviewMarks.PostPullRequestReview"/>
             <reference ref="ReviewMarks.EndPullRequestReview"/>
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </group>
+
+        <group id="ReviewMarks.FromGitMenu"
+               popup="true"
+               icon="AllIcons.Vcs.Branch"
+               text="Review from Git"
+               description="Mark changes from git or a pull request to review.">
+            <reference ref="ReviewMarks.MarkBranchChanges"/>
+            <reference ref="ReviewMarks.MarkUncommittedChanges"/>
+            <reference ref="ReviewMarks.ReviewBranchChanges"/>
+            <reference ref="ReviewMarks.StartPullRequestReview"/>
+        </group>
+        <group id="ReviewMarks.Toolbar">
+            <reference ref="ReviewMarks.MarkAsToReview"/>
+            <reference ref="ReviewMarks.MarkSelectionAsReviewed"/>
+            <reference ref="ReviewMarks.MarkAndGoToNext"/>
+            <reference ref="ReviewMarks.ClearReviewedMark"/>
+            <separator/>
+            <reference ref="ReviewMarks.GoToNextRunToReview"/>
+            <reference ref="ReviewMarks.GoBackToLastStop"/>
+            <separator/>
+            <reference ref="ReviewMarks.AddOrEditNote"/>
+            <separator/>
+            <reference ref="ReviewMarks.FromGitMenu"/>
         </group>
     </actions>
 </idea-plugin>

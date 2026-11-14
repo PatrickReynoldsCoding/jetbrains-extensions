@@ -54,11 +54,11 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
     var pullRequest: PullRequestSession? = null
         private set
 
+    private val agentNotesFile = AgentNotesFile(project)
+
     private var lastStop: StoredStop? = null
 
     private var reviewLog: List<ReviewLogEntry> = emptyList()
-
-    private var reviewWindow: ReviewWindow? = null
 
     init {
         EditorFactory.getInstance().eventMulticaster.addDocumentListener(
@@ -79,7 +79,6 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         logNewlyReviewedLines(document, range)
         replaceMarksIn(document, range, MarkState.REVIEWED)
         rememberStop(document, range)
-        remindOfPauseIfDue()
         afterChangesUpdate.request()
     }
 
@@ -292,7 +291,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
 
     fun pullRequestComments(): List<ReviewComment> {
         val session = pullRequest ?: return emptyList()
-        return allNotes().filter { it.includeInPullRequest }.mapNotNull { note ->
+        return allNotes().filter { noteKindNamed(it.kind) == NoteKind.PR_COMMENT }.mapNotNull { note ->
             val file = VirtualFileManager.getInstance().findFileByUrl(note.fileUrl) ?: return@mapNotNull null
             val relativePath = relativePathIn(session.repositoryRoot, file.path) ?: return@mapNotNull null
             val documentText = FileDocumentManager.getInstance().getDocument(file)?.text ?: return@mapNotNull null
@@ -341,7 +340,6 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         lastStop = state.lastStop
         reviewLog = state.reviewLog.toList()
         pullRequest = state.pullRequest
-        reviewWindow = null
     }
 
     override fun dispose() = Unit
@@ -429,6 +427,23 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
 
     private fun announceReviewStateChanged() {
         project.messageBus.syncPublisher(ReviewStateListener.TOPIC).reviewStateChanged()
+        saveAgentNotes()
+    }
+
+    private fun saveAgentNotes() {
+        val entries = allNotes().filter { noteKindNamed(it.kind) == NoteKind.AGENT_NOTE }.mapNotNull { note ->
+            val file = VirtualFileManager.getInstance().findFileByUrl(note.fileUrl) ?: return@mapNotNull null
+            val documentText = FileDocumentManager.getInstance().getDocument(file)?.text ?: return@mapNotNull null
+            val noteOffset = locateMarkedText(documentText, note.anchorText, note.startOffset) ?: note.startOffset
+            val lineNumber = lineNumberAt(documentText, noteOffset)
+            AgentNoteEntry(
+                relativePath = project.basePath?.let { relativePathIn(it, file.path) } ?: file.path,
+                lineNumber = lineNumber,
+                codeLine = documentText.lines().getOrElse(lineNumber - 1) { "" }.trim(),
+                noteText = note.text,
+            )
+        }
+        agentNotesFile.save(entries)
     }
 
     private fun storeOpenDocuments() {
@@ -458,22 +473,6 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         val reviewedRangesBefore = rangesWithState(ReviewedMarkHighlighters.inDocument(project, document), MarkState.REVIEWED)
         val newLineCount = newlyReviewedLineCount(document.text, range, reviewedRangesBefore)
         reviewLog = addToReviewLog(reviewLog, LocalDate.now().toString(), file.url, newLineCount)
-    }
-
-    private fun remindOfPauseIfDue() {
-        val pauseSettings = service<ReviewMarksSettings>().state
-        if (!pauseSettings.pauseRemindersOn) {
-            reviewWindow = null
-            return
-        }
-        val pauseCheck = checkForPause(
-            windowBeforeBlock = reviewWindow,
-            nowMillis = System.currentTimeMillis(),
-            minutesBetweenPauses = pauseSettings.minutesBetweenPauses,
-            blocksBetweenPauses = pauseSettings.blocksBetweenPauses,
-        )
-        reviewWindow = pauseCheck.windowAfterBlock
-        pauseCheck.reminder?.let { showPauseReminder(project, it) }
     }
 
     private fun linesLeftByFile(): List<FileLinesLeft> {
@@ -514,7 +513,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             val startOffset = locateMarkedText(documentText, storedNote.anchorText, storedNote.startOffset)
             if (startOffset != null) {
                 val codeRange = TextRange(startOffset, startOffset + storedNote.anchorText.length)
-                val details = NoteDetails(storedNote.text, storedNote.floating, storedNote.includeInPullRequest)
+                val details = NoteDetails(storedNote.text, storedNote.floating, noteKindNamed(storedNote.kind))
                 ReviewNoteHighlighters.add(project, document, codeRange, details)
             }
         }
@@ -528,7 +527,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
                 anchorText = document.getText(note.range),
                 text = note.text,
                 floating = note.details.floating,
-                includeInPullRequest = note.details.includeInPullRequest,
+                kind = note.details.kind.name,
             )
         }
         if (notesInDocument.isEmpty()) {
