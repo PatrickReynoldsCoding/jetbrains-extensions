@@ -20,8 +20,3 @@ fun codeLinesOf(documentText: String): List<CodeLine> {
     }
     return codeLines
 }
-
-fun codeLinesInScope(documentText: String, outOfScopeRanges: List<TextRange>): List<CodeLine> {
-    val outOfScopeAreas = joinAcrossWhitespace(documentText, outOfScopeRanges)
-    return codeLinesOf(documentText).filter { codeLine -> outOfScopeAreas.none { it.contains(codeLine.codeRange) } }
-}

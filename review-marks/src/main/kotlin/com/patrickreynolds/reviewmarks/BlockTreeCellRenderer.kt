@@ -10,7 +10,7 @@ class BlockOfFile(val fileUrl: String, val row: BlockRow)
 private val LABEL_BY_BLOCK_KIND = mapOf(
     BlockKind.REVIEWED to "✓",
     BlockKind.CHANGED to "✎ changed",
-    BlockKind.UNREAD to "○ not read",
+    BlockKind.TO_REVIEW to "○ to review",
 )
 
 class BlockTreeCellRenderer : ColoredTreeCellRenderer() {

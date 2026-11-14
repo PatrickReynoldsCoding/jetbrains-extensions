@@ -15,15 +15,23 @@ import java.awt.Font
 
 private val MARK_STATE = Key.create<MarkState>("reviewmarks.markState")
 
-private val REVIEWED_BACKGROUND = JBColor(Color(0xD8, 0xF0, 0xD8), Color(0x2A, 0x42, 0x2A))
-private val REVIEWED_STRIPE = JBColor(Color(0x5C, 0xB8, 0x5C), Color(0x4A, 0x8F, 0x4A))
-internal val FADED_TEXT_COLOR = JBColor(Color(0x9A, 0x9A, 0x9A), Color(0x70, 0x70, 0x70))
+private val BACKGROUND_BY_STATE = mapOf(
+    MarkState.REVIEWED to JBColor(Color(0xD8, 0xF0, 0xD8), Color(0x2A, 0x42, 0x2A)),
+    MarkState.TO_REVIEW to JBColor(Color(0xD6, 0xE6, 0xFF), Color(0x25, 0x38, 0x4F)),
+    MarkState.CHANGED to JBColor(Color(0xFF, 0xE3, 0xA8), Color(0x5C, 0x45, 0x18)),
+)
 
-private val CHANGED_BACKGROUND = JBColor(Color(0xFF, 0xE3, 0xA8), Color(0x5C, 0x45, 0x18))
-private val CHANGED_STRIPE = JBColor(Color(0xE0, 0xA0, 0x30), Color(0xC0, 0x88, 0x20))
+private val STRIPE_BY_STATE = mapOf(
+    MarkState.REVIEWED to JBColor(Color(0x5C, 0xB8, 0x5C), Color(0x4A, 0x8F, 0x4A)),
+    MarkState.TO_REVIEW to JBColor(Color(0x4A, 0x90, 0xE2), Color(0x3B, 0x78, 0xC4)),
+    MarkState.CHANGED to JBColor(Color(0xE0, 0xA0, 0x30), Color(0xC0, 0x88, 0x20)),
+)
 
-private const val REVIEWED_TOOLTIP = "Marked as reviewed. A line you edit here turns amber."
-private const val CHANGED_TOOLTIP = "Changed since you reviewed it. Mark it as reviewed again when you have read it."
+private val TOOLTIP_BY_STATE = mapOf(
+    MarkState.REVIEWED to "Marked as reviewed. A line you edit here turns amber.",
+    MarkState.TO_REVIEW to "Marked to review. Mark it as reviewed when you have read it.",
+    MarkState.CHANGED to "Changed since you reviewed it. Mark it as reviewed again when you have read it.",
+)
 
 data class ReviewMark(val highlighter: RangeHighlighter, val state: MarkState) {
     val range: TextRange get() = TextRange(highlighter.startOffset, highlighter.endOffset)
@@ -31,17 +39,19 @@ data class ReviewMark(val highlighter: RangeHighlighter, val state: MarkState) {
 
 object ReviewedMarkHighlighters {
 
-    fun add(project: Project, document: Document, range: TextRange, state: MarkState, focusMode: Boolean) {
+    fun add(project: Project, document: Document, range: TextRange, state: MarkState) {
         val markupModel = DocumentMarkupModel.forDocument(document, project, true)
+        val attributes = TextAttributes(null, BACKGROUND_BY_STATE.getValue(state), null, null, Font.PLAIN)
+        attributes.errorStripeColor = STRIPE_BY_STATE.getValue(state)
         val highlighter = markupModel.addRangeHighlighter(
             range.startOffset,
             range.endOffset,
             HighlighterLayer.ADDITIONAL_SYNTAX,
-            textAttributesFor(state, focusMode),
+            attributes,
             HighlighterTargetArea.EXACT_RANGE,
         )
         highlighter.putUserData(MARK_STATE, state)
-        highlighter.errorStripeTooltip = if (state == MarkState.REVIEWED) REVIEWED_TOOLTIP else CHANGED_TOOLTIP
+        highlighter.errorStripeTooltip = TOOLTIP_BY_STATE.getValue(state)
         if (state == MarkState.CHANGED) {
             highlighter.isGreedyToLeft = true
             highlighter.isGreedyToRight = true
@@ -59,15 +69,5 @@ object ReviewedMarkHighlighters {
     fun remove(project: Project, document: Document, marks: List<ReviewMark>) {
         val markupModel = DocumentMarkupModel.forDocument(document, project, false) ?: return
         marks.forEach { markupModel.removeHighlighter(it.highlighter) }
-    }
-
-    private fun textAttributesFor(state: MarkState, focusMode: Boolean): TextAttributes {
-        val attributes = when {
-            state == MarkState.CHANGED -> TextAttributes(null, CHANGED_BACKGROUND, null, null, Font.PLAIN)
-            focusMode -> TextAttributes(FADED_TEXT_COLOR, null, null, null, Font.PLAIN)
-            else -> TextAttributes(null, REVIEWED_BACKGROUND, null, null, Font.PLAIN)
-        }
-        attributes.errorStripeColor = if (state == MarkState.CHANGED) CHANGED_STRIPE else REVIEWED_STRIPE
-        return attributes
     }
 }

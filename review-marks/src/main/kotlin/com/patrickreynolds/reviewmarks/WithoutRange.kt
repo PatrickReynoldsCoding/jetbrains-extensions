@@ -14,5 +14,10 @@ fun withoutRange(markedBlock: TextRange, removedRange: TextRange): List<TextRang
     return listOfNotNull(partBeforeRemovedRange, partAfterRemovedRange)
 }
 
+fun withoutRanges(markedBlock: TextRange, removedRanges: List<TextRange>): List<TextRange> =
+    removedRanges.fold(listOf(markedBlock)) { remainingParts, removedRange ->
+        remainingParts.flatMap { withoutRange(it, removedRange) }
+    }
+
 private fun rangeOrNull(startOffset: Int, endOffset: Int): TextRange? =
     if (endOffset > startOffset) TextRange(startOffset, endOffset) else null

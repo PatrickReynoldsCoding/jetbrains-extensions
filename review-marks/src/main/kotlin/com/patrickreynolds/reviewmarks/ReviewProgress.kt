@@ -4,14 +4,14 @@ import com.intellij.openapi.util.TextRange
 
 data class ReviewProgress(
     val reviewedLineCount: Int,
-    val codeLineCount: Int,
+    val markedLineCount: Int,
     val changedLineCount: Int,
 ) {
-    val percentReviewed: Int get() = if (codeLineCount == 0) 0 else reviewedLineCount * 100 / codeLineCount
+    val percentReviewed: Int get() = if (markedLineCount == 0) 0 else reviewedLineCount * 100 / markedLineCount
 
     fun statusText(): String {
-        if (codeLineCount == 0) return ""
-        val reviewedText = "Reviewed $percentReviewed% ($reviewedLineCount/$codeLineCount lines)"
+        if (markedLineCount == 0) return ""
+        val reviewedText = "Reviewed $percentReviewed% ($reviewedLineCount/$markedLineCount lines)"
         return if (changedLineCount == 0) reviewedText else "$reviewedText · $changedLineCount changed"
     }
 }
@@ -19,17 +19,16 @@ data class ReviewProgress(
 fun reviewProgress(
     documentText: String,
     reviewedRanges: List<TextRange>,
+    toReviewRanges: List<TextRange>,
     changedRanges: List<TextRange>,
-    outOfScopeRanges: List<TextRange>,
 ): ReviewProgress {
-    val codeLines = codeLinesInScope(documentText, outOfScopeRanges)
-    val unreviewedLineCount = linesNeedingReview(documentText, reviewedRanges, outOfScopeRanges).size
-    val changedLineCount = codeLines.count { codeLine ->
-        changedRanges.any { it.intersectsStrict(codeLine.codeRange) }
-    }
+    val codeLines = codeLinesOf(documentText)
+    val reviewedAreas = joinAcrossWhitespace(documentText, reviewedRanges)
+    val markedAreas = joinAcrossWhitespace(documentText, reviewedRanges + toReviewRanges + changedRanges)
+
     return ReviewProgress(
-        reviewedLineCount = codeLines.size - unreviewedLineCount,
-        codeLineCount = codeLines.size,
-        changedLineCount = changedLineCount,
+        reviewedLineCount = codeLines.count { codeLine -> reviewedAreas.any { it.contains(codeLine.codeRange) } },
+        markedLineCount = codeLines.count { codeLine -> markedAreas.any { it.contains(codeLine.codeRange) } },
+        changedLineCount = codeLines.count { codeLine -> changedRanges.any { it.intersectsStrict(codeLine.codeRange) } },
     )
 }

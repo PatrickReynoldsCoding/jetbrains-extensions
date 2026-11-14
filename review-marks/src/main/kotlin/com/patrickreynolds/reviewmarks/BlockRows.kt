@@ -7,7 +7,7 @@ private const val PREVIEW_LENGTH = 40
 enum class BlockKind {
     REVIEWED,
     CHANGED,
-    UNREAD,
+    TO_REVIEW,
 }
 
 data class BlockRow(
@@ -20,37 +20,18 @@ data class BlockRow(
     val endOffset: Int,
 )
 
-fun reviewedBlockRows(documentText: String, reviewedRanges: List<TextRange>): List<BlockRow> {
+fun blockRows(kind: BlockKind, documentText: String, markedRanges: List<TextRange>): List<BlockRow> {
     val codeLines = codeLinesOf(documentText)
-    return joinAcrossWhitespace(documentText, reviewedRanges).mapNotNull { reviewedArea ->
-        val codeLinesInArea = codeLines.filter { reviewedArea.contains(it.codeRange) }
-        if (codeLinesInArea.isEmpty()) null else blockRowOf(BlockKind.REVIEWED, documentText, codeLinesInArea)
+    return joinAcrossWhitespace(documentText, markedRanges).mapNotNull { markedArea ->
+        val codeLinesInArea = codeLines.filter { markedArea.contains(it.codeRange) }
+        if (codeLinesInArea.isEmpty()) null else blockRowOf(kind, documentText, codeLinesInArea)
     }
 }
 
-fun blocksToReviewRows(
-    documentText: String,
-    reviewedRanges: List<TextRange>,
-    changedRanges: List<TextRange>,
-    outOfScopeRanges: List<TextRange>,
-): List<BlockRow> {
-    val lineNumbersToReview = linesNeedingReview(documentText, reviewedRanges, outOfScopeRanges).toSet()
-    val codeLinesToReview = codeLinesOf(documentText).filter { it.lineNumber in lineNumbersToReview }
-    val rows = splitIntoRuns(codeLinesToReview).map { run ->
-        val runHasChangedLine = run.any { codeLine -> changedRanges.any { it.intersectsStrict(codeLine.codeRange) } }
-        blockRowOf(if (runHasChangedLine) BlockKind.CHANGED else BlockKind.UNREAD, documentText, run)
-    }
-    return rows.sortedBy { if (it.kind == BlockKind.CHANGED) 0 else 1 }
-}
-
-private fun splitIntoRuns(codeLines: List<CodeLine>): List<List<CodeLine>> {
-    val runs = mutableListOf<MutableList<CodeLine>>()
-    codeLines.forEach { codeLine ->
-        val currentRun = runs.lastOrNull()
-        val continuesCurrentRun = currentRun != null && currentRun.last().lineNumber + 1 == codeLine.lineNumber
-        if (continuesCurrentRun) currentRun!!.add(codeLine) else runs.add(mutableListOf(codeLine))
-    }
-    return runs
+fun toReviewBlockRows(documentText: String, toReviewRanges: List<TextRange>, changedRanges: List<TextRange>): List<BlockRow> {
+    val changedRows = blockRows(BlockKind.CHANGED, documentText, changedRanges)
+    val toReviewRows = blockRows(BlockKind.TO_REVIEW, documentText, toReviewRanges)
+    return changedRows.sortedBy { it.firstLine } + toReviewRows.sortedBy { it.firstLine }
 }
 
 private fun blockRowOf(kind: BlockKind, documentText: String, codeLinesInBlock: List<CodeLine>): BlockRow {

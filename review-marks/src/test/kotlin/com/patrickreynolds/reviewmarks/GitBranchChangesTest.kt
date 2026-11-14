@@ -31,13 +31,17 @@ class GitBranchChangesTest : BasePlatformTestCase() {
 
     private fun fileText(vararg lines: String) = lines.joinToString("\n", postfix = "\n")
 
-    fun `test finds the committed and the uncommitted lines changed since the base branch`() {
+    private fun createRepositoryWithMainAndFeatureBranch() {
         git("init", "-b", "main")
         File(repositoryFolder, "Sample.txt").writeText(fileText("one", "two", "three", "four", "five"))
         File(repositoryFolder, "Untouched.txt").writeText(fileText("same"))
         git("add", "-A")
         git("commit", "-m", "base")
-        git("checkout", "-b", "feature")
+        git("checkout", "-b", "feature/login")
+    }
+
+    fun `test finds the committed and the uncommitted lines changed since the base branch`() {
+        createRepositoryWithMainAndFeatureBranch()
         File(repositoryFolder, "Sample.txt").writeText(fileText("one", "two", "THREE", "four", "five"))
         git("commit", "-am", "change line three")
         File(repositoryFolder, "Sample.txt").writeText(fileText("one", "two", "THREE", "four", "FIVE"))
@@ -52,15 +56,40 @@ class GitBranchChangesTest : BasePlatformTestCase() {
     }
 
     fun `test reports the git error when the base branch does not exist`() {
-        git("init", "-b", "main")
-        File(repositoryFolder, "Sample.txt").writeText(fileText("one"))
-        git("add", "-A")
-        git("commit", "-m", "base")
+        createRepositoryWithMainAndFeatureBranch()
 
         val result = GitBranchChanges.changedLinesSince(repositoryFolder.path, "no-such-branch")
 
-        val failed = result as BranchChangesResult.GitFailed
-        assertTrue(failed.command.contains("merge-base"))
-        assertTrue(failed.errorOutput.isNotEmpty())
+        val failed = result as BranchChangesResult.Failed
+        assertTrue(failed.git.command.contains("merge-base"))
+        assertTrue(failed.git.errorOutput.isNotEmpty())
+    }
+
+    fun `test lists the local branches of the repository`() {
+        createRepositoryWithMainAndFeatureBranch()
+
+        val result = GitBranches.list(repositoryFolder.path)
+
+        assertEquals(listOf("feature/login", "main"), (result as BranchListResult.Found).branches)
+    }
+
+    fun `test reads the root, remote, branch and head commit of a repository`() {
+        createRepositoryWithMainAndFeatureBranch()
+        git("remote", "add", "origin", "git@github.com:acme/widgets.git")
+
+        val result = GitRepository.read(repositoryFolder.path) as GitRepositoryInfoResult.Found
+
+        assertEquals(repositoryFolder.path, result.info.root)
+        assertEquals("git@github.com:acme/widgets.git", result.info.remoteUrl)
+        assertEquals("feature/login", result.info.currentBranch)
+        assertEquals(40, result.info.headSha.length)
+    }
+
+    fun `test reports the git error when the repository has no origin remote`() {
+        createRepositoryWithMainAndFeatureBranch()
+
+        val result = GitRepository.read(repositoryFolder.path)
+
+        assertTrue((result as GitRepositoryInfoResult.Failed).git.command.contains("remote get-url origin"))
     }
 }

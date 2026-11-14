@@ -5,4 +5,6 @@ data class StoredNote(
     var startOffset: Int = 0,
     var anchorText: String = "",
     var text: String = "",
+    var floating: Boolean = false,
+    var includeInPullRequest: Boolean = true,
 )

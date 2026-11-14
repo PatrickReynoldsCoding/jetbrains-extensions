@@ -11,10 +11,9 @@ data class StoredMark(
 
 class ReviewMarksState(
     var marks: MutableList<StoredMark> = mutableListOf(),
-    var focusMode: Boolean = false,
     var foldMode: Boolean = false,
     var lastStop: StoredStop? = null,
-    var scope: StoredScope? = null,
     var notes: MutableList<StoredNote> = mutableListOf(),
     var reviewLog: MutableList<ReviewLogEntry> = mutableListOf(),
+    var pullRequest: PullRequestSession? = null,
 )

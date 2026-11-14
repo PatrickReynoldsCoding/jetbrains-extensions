@@ -5,6 +5,7 @@ import com.intellij.notification.Notifications
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.Document
+import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.util.TextRange
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
@@ -17,6 +18,8 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
     private val lineThreeEnd = lineThreeStart + "line three".length
     private val lineFourEnd = documentText.indexOf("line four") + "line four".length
 
+    private val plainNote = NoteDetails("ask Sam", floating = false, includeInPullRequest = true)
+
     private fun reviewMarks() = project.service<ReviewMarksService>()
 
     override fun setUp() {
@@ -24,10 +27,17 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
         reviewMarks().loadState(ReviewMarksState())
     }
 
-    private fun openDocumentWithLinesTwoToFourMarked(): Document {
+    private fun openDocumentWithLinesTwoToFourReviewed(): Document {
         myFixture.configureByText("Example.txt", documentText)
         val document = myFixture.editor.document
         reviewMarks().markRangeAsReviewed(document, TextRange(lineTwoStart, lineFourEnd))
+        return document
+    }
+
+    private fun openDocumentWithLinesTwoToFourToReview(): Document {
+        myFixture.configureByText("Example.txt", documentText)
+        val document = myFixture.editor.document
+        reviewMarks().markRangeToReview(document, TextRange(lineTwoStart, lineFourEnd))
         return document
     }
 
@@ -50,13 +60,85 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
 
     private fun edit(change: () -> Unit) = WriteCommandAction.runWriteCommandAction(project) { change() }
 
-    fun `test a marked block is highlighted as reviewed`() {
-        val document = openDocumentWithLinesTwoToFourMarked()
+    private fun floatingNoteInlayCount() =
+        myFixture.editor.inlayModel.getBlockElementsInRange(0, myFixture.editor.document.textLength, EditorCustomElementRenderer::class.java).size
+
+    private fun pullRequestSession() = PullRequestSession(
+        number = 7,
+        title = "Fix retries",
+        htmlUrl = "https://github.com/acme/widgets/pull/7",
+        host = "github.com",
+        apiUrl = "https://api.github.com",
+        owner = "acme",
+        repository = "widgets",
+        headSha = "abc123",
+        repositoryRoot = "/src",
+        accountName = "octo",
+    )
+
+    fun `test a block marked as reviewed is highlighted as reviewed`() {
+        val document = openDocumentWithLinesTwoToFourReviewed()
         assertEquals(listOf(Triple(MarkState.REVIEWED, lineTwoStart, lineFourEnd)), marks(document))
     }
 
+    fun `test a block marked to review is highlighted and listed in the blocks to review`() {
+        val document = openDocumentWithLinesTwoToFourToReview()
+
+        assertEquals(listOf(Triple(MarkState.TO_REVIEW, lineTwoStart, lineFourEnd)), marks(document))
+        val fileBlocks = reviewMarks().blocksToReview().single()
+        assertEquals(listOf(Triple(BlockKind.TO_REVIEW, 2, 4)), fileBlocks.rows.map { Triple(it.kind, it.firstLine, it.lastLine) })
+    }
+
+    fun `test code that is not marked is not listed to review`() {
+        myFixture.configureByText("Example.txt", documentText)
+        assertEquals(emptyList<FileBlocks>(), reviewMarks().blocksToReview())
+    }
+
+    fun `test marking to-review code as reviewed turns that part reviewed and leaves the rest to review`() {
+        val document = openDocumentWithLinesTwoToFourToReview()
+
+        reviewMarks().markRangeAsReviewed(document, TextRange(lineTwoStart, lineThreeEnd))
+
+        assertEquals(
+            listOf(
+                Triple(MarkState.REVIEWED, lineTwoStart, lineThreeEnd),
+                Triple(MarkState.TO_REVIEW, lineThreeEnd, lineFourEnd),
+            ),
+            marks(document),
+        )
+    }
+
+    fun `test marking reviewed code to review turns that part back to to review`() {
+        val document = openDocumentWithLinesTwoToFourReviewed()
+
+        reviewMarks().markRangeToReview(document, TextRange(lineThreeStart, lineFourEnd))
+
+        assertEquals(
+            listOf(
+                Triple(MarkState.REVIEWED, lineTwoStart, lineThreeStart),
+                Triple(MarkState.TO_REVIEW, lineThreeStart, lineFourEnd),
+            ),
+            marks(document),
+        )
+    }
+
+    fun `test progress counts reviewed lines out of the lines that are marked`() {
+        val document = openDocumentWithLinesTwoToFourToReview()
+        reviewMarks().markRangeAsReviewed(document, TextRange(lineTwoStart, lineThreeEnd))
+
+        assertEquals(
+            ReviewProgress(reviewedLineCount = 2, markedLineCount = 3, changedLineCount = 0),
+            reviewMarks().progressOf(document),
+        )
+    }
+
+    fun `test progress is empty before anything is marked`() {
+        myFixture.configureByText("Example.txt", documentText)
+        assertEquals("", reviewMarks().progressOf(myFixture.editor.document).statusText())
+    }
+
     fun `test editing one line turns only that line to changed and keeps the lines around it reviewed`() {
-        val document = openDocumentWithLinesTwoToFourMarked()
+        val document = openDocumentWithLinesTwoToFourReviewed()
 
         edit { document.insertString(lineThreeStart + 5, "X") }
 
@@ -71,7 +153,7 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
     }
 
     fun `test typing more into a changed line keeps it as one changed line`() {
-        val document = openDocumentWithLinesTwoToFourMarked()
+        val document = openDocumentWithLinesTwoToFourReviewed()
         edit { document.insertString(lineThreeStart + 5, "X") }
 
         edit { document.insertString(lineThreeStart + 6, "Y") }
@@ -88,17 +170,24 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
     }
 
     fun `test marking the changed line as reviewed turns it green again`() {
-        val document = openDocumentWithLinesTwoToFourMarked()
+        val document = openDocumentWithLinesTwoToFourReviewed()
         edit { document.insertString(lineThreeStart + 5, "X") }
 
         reviewMarks().markRangeAsReviewed(document, TextRange(lineThreeStart, lineThreeEnd + 1))
 
-        val reviewedStates = marks(document).map { it.first }.toSet()
-        assertEquals(setOf(MarkState.REVIEWED), reviewedStates)
+        assertEquals(setOf(MarkState.REVIEWED), marks(document).map { it.first }.toSet())
+    }
+
+    fun `test editing inside code marked to review keeps it to review`() {
+        val document = openDocumentWithLinesTwoToFourToReview()
+
+        edit { document.insertString(lineThreeStart + 5, "X") }
+
+        assertEquals(listOf(Triple(MarkState.TO_REVIEW, lineTwoStart, lineFourEnd + 1)), marks(document))
     }
 
     fun `test editing above the marked block keeps the mark and moves it with the text`() {
-        val document = openDocumentWithLinesTwoToFourMarked()
+        val document = openDocumentWithLinesTwoToFourReviewed()
         edit { document.insertString(0, "new line\n") }
         val shift = "new line\n".length
         assertEquals(
@@ -108,12 +197,12 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
     }
 
     fun `test editing below the marked block keeps the mark`() {
-        val document = openDocumentWithLinesTwoToFourMarked()
+        val document = openDocumentWithLinesTwoToFourReviewed()
         edit { document.insertString(document.textLength, "line six\n") }
         assertEquals(listOf(Triple(MarkState.REVIEWED, lineTwoStart, lineFourEnd)), marks(document))
     }
 
-    fun `test typing on an empty line inside a marked block marks that typed text as changed`() {
+    fun `test typing on an empty line inside a reviewed block marks that typed text as changed`() {
         myFixture.configureByText("Gap.txt", "one\n\ntwo\n")
         val document = myFixture.editor.document
         reviewMarks().markRangeAsReviewed(document, TextRange(0, 8))
@@ -127,7 +216,7 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
     }
 
     fun `test clearing at the caret removes only the mark under the caret`() {
-        val document = openDocumentWithLinesTwoToFourMarked()
+        val document = openDocumentWithLinesTwoToFourReviewed()
         edit { document.insertString(lineThreeStart + 5, "X") }
 
         reviewMarks().clearMarksContaining(document, lineThreeStart + 2)
@@ -141,8 +230,8 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
         )
     }
 
-    fun `test the saved state holds the marked text, where it starts and whether it changed`() {
-        val document = openDocumentWithLinesTwoToFourMarked()
+    fun `test the saved state holds the marked text, where it starts and the kind of mark`() {
+        val document = openDocumentWithLinesTwoToFourReviewed()
         edit { document.insertString(lineThreeStart + 5, "X") }
 
         val savedMarks = reviewMarks().state.marks.sortedBy { it.startOffset }
@@ -155,13 +244,13 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
     fun `test a saved mark comes back when the file is opened and its text is unchanged`() {
         val file = myFixture.addFileToProject("Saved.txt", documentText).virtualFile
         reviewMarks().loadState(
-            ReviewMarksState(mutableListOf(StoredMark(file.url, lineTwoStart, "line two", "CHANGED"))),
+            ReviewMarksState(mutableListOf(StoredMark(file.url, lineTwoStart, "line two", "TO_REVIEW"))),
         )
 
         myFixture.openFileInEditor(file)
 
         assertEquals(
-            listOf(Triple(MarkState.CHANGED, lineTwoStart, lineTwoStart + "line two".length)),
+            listOf(Triple(MarkState.TO_REVIEW, lineTwoStart, lineTwoStart + "line two".length)),
             marks(myFixture.editor.document),
         )
     }
@@ -189,51 +278,8 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
         assertEquals(emptyList<Triple<MarkState, Int, Int>>(), marks(myFixture.editor.document))
     }
 
-    fun `test focus mode fades the text of reviewed code and the state is saved`() {
-        val document = openDocumentWithLinesTwoToFourMarked()
-        val reviewedMark = ReviewedMarkHighlighters.inDocument(project, document).single()
-        assertNotNull(reviewedMark.highlighter.getTextAttributes(myFixture.editor.colorsScheme)?.backgroundColor)
-
-        reviewMarks().changeFocusMode(true)
-
-        val fadedMark = ReviewedMarkHighlighters.inDocument(project, document).single()
-        val fadedAttributes = fadedMark.highlighter.getTextAttributes(myFixture.editor.colorsScheme)
-        assertNull(fadedAttributes?.backgroundColor)
-        assertNotNull(fadedAttributes?.foregroundColor)
-        assertTrue(reviewMarks().state.focusMode)
-    }
-
-    fun `test progress counts the reviewed code lines`() {
-        val document = openDocumentWithLinesTwoToFourMarked()
-        assertEquals(
-            ReviewProgress(reviewedLineCount = 3, codeLineCount = 5, changedLineCount = 0),
-            reviewMarks().progressOf(document),
-        )
-    }
-
-    fun `test going to the next code to review moves the caret to the first line that is not reviewed`() {
-        openDocumentWithLinesTwoToFourMarked()
-        myFixture.editor.caretModel.moveToOffset(0)
-
-        reviewMarks().goToNextRunToReview(myFixture.editor)
-
-        assertEquals(4, myFixture.editor.caretModel.logicalPosition.line)
-    }
-
-    fun `test marking the method around the caret marks the whole method`() {
-        val javaText = "class Sample {\n    int total(int a, int b) {\n        int sum = a + b;\n        return sum;\n    }\n}\n"
-        myFixture.configureByText("Sample.java", javaText)
-        myFixture.editor.caretModel.moveToOffset(javaText.indexOf("int sum"))
-
-        val range = findEnclosingDeclarationRange(myFixture.file, myFixture.editor.document, myFixture.editor.caretModel.offset)
-
-        val methodStart = javaText.indexOf("    int total")
-        val methodEnd = javaText.indexOf("    }\n") + "    }".length
-        assertEquals(TextRange(methodStart, methodEnd), range)
-    }
-
     fun `test fold mode folds reviewed lines into one line and unfolds them when turned off`() {
-        openDocumentWithLinesTwoToFourMarked()
+        openDocumentWithLinesTwoToFourReviewed()
 
         reviewMarks().changeFoldMode(true)
 
@@ -248,8 +294,16 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
         assertEquals(0, myFixture.editor.foldingModel.allFoldRegions.size)
     }
 
+    fun `test code marked to review is not folded`() {
+        openDocumentWithLinesTwoToFourToReview()
+
+        reviewMarks().changeFoldMode(true)
+
+        assertEquals(0, myFixture.editor.foldingModel.allFoldRegions.size)
+    }
+
     fun `test going back to where I stopped opens the end of the last reviewed line`() {
-        val document = openDocumentWithLinesTwoToFourMarked()
+        val document = openDocumentWithLinesTwoToFourReviewed()
         myFixture.editor.caretModel.moveToOffset(0)
 
         val wentBack = reviewMarks().goToLastStop()
@@ -266,7 +320,7 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
     }
 
     fun `test the last stop and fold mode are saved`() {
-        openDocumentWithLinesTwoToFourMarked()
+        openDocumentWithLinesTwoToFourReviewed()
         reviewMarks().changeFoldMode(true)
 
         val savedState = reviewMarks().state
@@ -275,81 +329,60 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
         assertEquals("line four", savedState.lastStop?.anchorText)
     }
 
-    fun `test reviewing only branch changes fades everything else and counts only the changed lines`() {
-        val file = myFixture.configureByText("Scoped.txt", documentText).virtualFile
-        val document = myFixture.editor.document
+    fun `test going to the next code to review skips reviewed code and goes to code marked to review`() {
+        val document = openDocumentWithLinesTwoToFourToReview()
+        reviewMarks().markRangeAsReviewed(document, TextRange(lineTwoStart, lineThreeEnd))
+        myFixture.editor.caretModel.moveToOffset(0)
 
-        reviewMarks().startReviewingOnlyChanges("origin/main", mapOf(file.path to listOf(LineRange(2, 3))))
+        reviewMarks().goToNextRunToReview(myFixture.editor)
 
-        assertEquals(
-            listOf(TextRange(0, lineThreeStart - 1), TextRange(documentText.indexOf("line five"), documentText.length)),
-            OutOfScopeHighlighters.rangesIn(project, document),
-        )
-        assertEquals(
-            ReviewProgress(reviewedLineCount = 0, codeLineCount = 2, changedLineCount = 0),
-            reviewMarks().progressOf(document),
-        )
-        assertEquals("origin/main", reviewMarks().scopeBaseRef)
-    }
-
-    fun `test reviewing a changed line in scope raises the progress`() {
-        val file = myFixture.configureByText("Scoped.txt", documentText).virtualFile
-        val document = myFixture.editor.document
-        reviewMarks().startReviewingOnlyChanges("origin/main", mapOf(file.path to listOf(LineRange(2, 3))))
-
-        reviewMarks().markRangeAsReviewed(document, TextRange(lineThreeStart, lineThreeEnd))
-
-        assertEquals(
-            ReviewProgress(reviewedLineCount = 1, codeLineCount = 2, changedLineCount = 0),
-            reviewMarks().progressOf(document),
-        )
-    }
-
-    fun `test a file that is not part of the branch changes is entirely out of scope`() {
-        myFixture.configureByText("Other.txt", documentText)
-        val document = myFixture.editor.document
-
-        reviewMarks().startReviewingOnlyChanges("origin/main", emptyMap())
-
-        assertEquals(listOf(TextRange(0, documentText.length)), OutOfScopeHighlighters.rangesIn(project, document))
-        assertEquals("", reviewMarks().progressOf(document).statusText())
-    }
-
-    fun `test stopping the branch review counts every line again and the scope is saved while it is on`() {
-        val file = myFixture.configureByText("Scoped.txt", documentText).virtualFile
-        val document = myFixture.editor.document
-        reviewMarks().startReviewingOnlyChanges("origin/main", mapOf(file.path to listOf(LineRange(2, 3))))
-        assertEquals("origin/main", reviewMarks().state.scope?.baseRef)
-
-        reviewMarks().stopReviewingOnlyChanges()
-
-        assertEquals(emptyList<TextRange>(), OutOfScopeHighlighters.rangesIn(project, document))
-        assertEquals(5, reviewMarks().progressOf(document).codeLineCount)
-        assertNull(reviewMarks().scopeBaseRef)
+        assertEquals(3, myFixture.editor.caretModel.logicalPosition.line)
     }
 
     fun `test a note puts a gutter icon on its line and shows the note as the tooltip`() {
         myFixture.configureByText("Notes.txt", documentText)
         val document = myFixture.editor.document
 
-        reviewMarks().setNoteAt(document, lineThreeStart + 2, "ask why this retries")
+        reviewMarks().setNoteAt(document, lineThreeStart + 2, plainNote)
 
         val note = ReviewNoteHighlighters.inDocument(project, document).single()
-        assertEquals("ask why this retries", note.text)
+        assertEquals("ask Sam", note.text)
         assertEquals("line three", document.getText(note.range))
-        assertEquals("ask why this retries", note.highlighter.gutterIconRenderer?.tooltipText)
+        assertEquals("ask Sam", note.highlighter.gutterIconRenderer?.tooltipText)
+        assertEquals(0, floatingNoteInlayCount())
     }
 
-    fun `test setting the note again changes its text and an empty note deletes it`() {
+    fun `test a floating note shows above its line and stops when the option is turned off`() {
         myFixture.configureByText("Notes.txt", documentText)
         val document = myFixture.editor.document
-        reviewMarks().setNoteAt(document, lineThreeStart, "first")
 
-        reviewMarks().setNoteAt(document, lineThreeStart + 4, "second")
+        reviewMarks().setNoteAt(document, lineThreeStart, plainNote.copy(floating = true))
+        assertEquals(1, floatingNoteInlayCount())
+
+        reviewMarks().setNoteAt(document, lineThreeStart, plainNote.copy(floating = false))
+        assertEquals(0, floatingNoteInlayCount())
+    }
+
+    fun `test deleting a floating note removes its inlay`() {
+        myFixture.configureByText("Notes.txt", documentText)
+        val document = myFixture.editor.document
+        reviewMarks().setNoteAt(document, lineThreeStart, plainNote.copy(floating = true))
+
+        reviewMarks().setNoteAt(document, lineThreeStart, plainNote.copy(text = "", floating = true))
+
+        assertEquals(0, floatingNoteInlayCount())
+    }
+
+    fun `test setting the note again changes its details and an empty note deletes it`() {
+        myFixture.configureByText("Notes.txt", documentText)
+        val document = myFixture.editor.document
+        reviewMarks().setNoteAt(document, lineThreeStart, plainNote.copy(text = "first"))
+
+        reviewMarks().setNoteAt(document, lineThreeStart + 4, plainNote.copy(text = "second"))
         assertEquals(listOf("second"), ReviewNoteHighlighters.inDocument(project, document).map { it.text })
-        assertEquals("second", reviewMarks().noteTextAt(document, lineThreeStart))
+        assertEquals("second", reviewMarks().noteDetailsAt(document, lineThreeStart)?.text)
 
-        reviewMarks().setNoteAt(document, lineThreeStart, "")
+        reviewMarks().setNoteAt(document, lineThreeStart, plainNote.copy(text = ""))
         assertEquals(emptyList<ReviewNote>(), ReviewNoteHighlighters.inDocument(project, document))
     }
 
@@ -364,7 +397,7 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
     fun `test a note stays on its line when lines are added above it`() {
         myFixture.configureByText("Notes.txt", documentText)
         val document = myFixture.editor.document
-        reviewMarks().setNoteAt(document, lineThreeStart, "keep")
+        reviewMarks().setNoteAt(document, lineThreeStart, plainNote)
 
         edit { document.insertString(0, "new line\n") }
 
@@ -372,31 +405,30 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
         assertEquals("line three", document.getText(note.range))
     }
 
-    fun `test saved state holds the notes and listing them shows the notes of open files`() {
+    fun `test saved state holds the notes with their options and listing them shows the notes of open files`() {
         myFixture.configureByText("Notes.txt", documentText)
         val document = myFixture.editor.document
-        reviewMarks().setNoteAt(document, lineThreeStart, "ask Sam")
+        reviewMarks().setNoteAt(document, lineThreeStart, NoteDetails("ask Sam", floating = true, includeInPullRequest = false))
 
         val savedNotes = reviewMarks().state.notes
         val listedNotes = reviewMarks().allNotes()
 
-        assertEquals(listOf("ask Sam"), savedNotes.map { it.text })
-        assertEquals(listOf("line three"), savedNotes.map { it.anchorText })
-        assertEquals(lineThreeStart, savedNotes.single().startOffset)
+        assertEquals(listOf(StoredNote(myFixture.file.virtualFile.url, lineThreeStart, "line three", "ask Sam", true, false)), savedNotes)
         assertEquals(savedNotes, listedNotes)
     }
 
-    fun `test a saved note comes back when the file is opened and its line is unchanged`() {
+    fun `test a saved note comes back with its options when the file is opened and its line is unchanged`() {
         val file = myFixture.addFileToProject("SavedNotes.txt", documentText).virtualFile
         reviewMarks().loadState(
-            ReviewMarksState(notes = mutableListOf(StoredNote(file.url, lineThreeStart, "line three", "ask Sam"))),
+            ReviewMarksState(notes = mutableListOf(StoredNote(file.url, lineThreeStart, "line three", "ask Sam", floating = true, includeInPullRequest = false))),
         )
 
         myFixture.openFileInEditor(file)
 
         val note = ReviewNoteHighlighters.inDocument(project, myFixture.editor.document).single()
-        assertEquals("ask Sam", note.text)
+        assertEquals(NoteDetails("ask Sam", floating = true, includeInPullRequest = false), note.details)
         assertEquals(TextRange(lineThreeStart, lineThreeEnd), note.range)
+        assertEquals(1, floatingNoteInlayCount())
     }
 
     fun `test a saved note is dropped when its line was edited while the file was closed`() {
@@ -413,7 +445,7 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
     fun `test deleting a note from the list removes it from the open file`() {
         myFixture.configureByText("Notes.txt", documentText)
         val document = myFixture.editor.document
-        reviewMarks().setNoteAt(document, lineThreeStart, "ask Sam")
+        reviewMarks().setNoteAt(document, lineThreeStart, plainNote)
 
         reviewMarks().deleteNote(reviewMarks().allNotes().single())
 
@@ -421,19 +453,20 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
         assertEquals(emptyList<StoredNote>(), reviewMarks().allNotes())
     }
 
-    fun `test today's summary counts each reviewed line once and lists what is left`() {
-        val document = openDocumentWithLinesTwoToFourMarked()
+    fun `test today's summary counts each reviewed line once and lists the code still marked to review`() {
+        val document = openDocumentWithLinesTwoToFourToReview()
+        reviewMarks().markRangeAsReviewed(document, TextRange(lineTwoStart, lineThreeEnd))
         reviewMarks().markRangeAsReviewed(document, TextRange(lineTwoStart, lineThreeEnd))
 
         val summary = reviewMarks().reviewSummaryToday()
 
-        assertEquals(3, summary.reviewedLineCountToday)
+        assertEquals(2, summary.reviewedLineCountToday)
         assertEquals(1, summary.fileCountReviewedToday)
-        assertEquals(listOf(2), summary.filesWithLinesLeft.map { it.lineCount })
+        assertEquals(listOf(1), summary.filesWithLinesLeft.map { it.lineCount })
     }
 
     fun `test the review log is saved with the state`() {
-        openDocumentWithLinesTwoToFourMarked()
+        openDocumentWithLinesTwoToFourReviewed()
         assertEquals(listOf(3), reviewMarks().state.reviewLog.map { it.reviewedLineCount })
     }
 
@@ -472,45 +505,130 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
     }
 
     fun `test the reviewed blocks list each file with its reviewed line range`() {
-        openDocumentWithLinesTwoToFourMarked()
+        openDocumentWithLinesTwoToFourReviewed()
 
-        val reviewedBlocks = reviewMarks().reviewedBlocks()
+        val fileBlocks = reviewMarks().reviewedBlocks().single()
 
-        val fileBlocks = reviewedBlocks.single()
         assertEquals("Example.txt", fileBlocks.fileName)
         assertEquals(listOf(Triple(2, 4, "line two")), fileBlocks.rows.map { Triple(it.firstLine, it.lastLine, it.preview) })
     }
 
-    fun `test the blocks to review list the changed lines first and then the unread blocks`() {
-        val document = openDocumentWithLinesTwoToFourMarked()
+    fun `test the blocks to review list the changed lines first and then the code marked to review`() {
+        val document = openDocumentWithLinesTwoToFourReviewed()
+        reviewMarks().markRangeToReview(document, TextRange(0, "line one".length))
         edit { document.insertString(lineThreeStart + 5, "X") }
 
-        val fileBlocks = reviewMarks().blocksToReview(myFixture.file.virtualFile.url).single()
+        val fileBlocks = reviewMarks().blocksToReview().single()
 
         assertEquals(
-            listOf(BlockKind.CHANGED to 3, BlockKind.UNREAD to 1, BlockKind.UNREAD to 5),
+            listOf(BlockKind.CHANGED to 3, BlockKind.TO_REVIEW to 1),
             fileBlocks.rows.map { it.kind to it.firstLine },
         )
     }
 
-    fun `test clearing a reviewed block removes the marks inside it`() {
-        val document = openDocumentWithLinesTwoToFourMarked()
+    fun `test clearing a block removes the marks inside it`() {
+        val document = openDocumentWithLinesTwoToFourReviewed()
         val row = reviewMarks().reviewedBlocks().single().rows.single()
 
-        reviewMarks().clearReviewedBlock(myFixture.file.virtualFile.url, TextRange(row.startOffset, row.endOffset))
+        reviewMarks().clearMarkedBlock(myFixture.file.virtualFile.url, TextRange(row.startOffset, row.endOffset))
 
         assertEquals(emptyList<Triple<MarkState, Int, Int>>(), marks(document))
         assertEquals(emptyList<FileBlocks>(), reviewMarks().reviewedBlocks())
     }
 
     fun `test clearing all marks keeps the notes`() {
-        val document = openDocumentWithLinesTwoToFourMarked()
-        reviewMarks().setNoteAt(document, lineThreeStart, "ask Sam")
+        val document = openDocumentWithLinesTwoToFourReviewed()
+        reviewMarks().markRangeToReview(document, TextRange(0, "line one".length))
+        reviewMarks().setNoteAt(document, lineThreeStart, plainNote)
 
         reviewMarks().clearAllMarks()
 
         assertEquals(emptyList<Triple<MarkState, Int, Int>>(), marks(document))
         assertEquals(listOf("ask Sam"), reviewMarks().allNotes().map { it.text })
+    }
+
+    fun `test marking the changed lines to review marks only the lines that are not marked yet`() {
+        val file = myFixture.configureByText("Example.txt", documentText).virtualFile
+        val document = myFixture.editor.document
+        reviewMarks().markRangeAsReviewed(document, TextRange(lineTwoStart, lineTwoStart + "line two".length))
+
+        val markedFileCount = reviewMarks().markChangedLinesToReview(mapOf(file to listOf(LineRange(1, 2), LineRange(4, 4))))
+
+        assertEquals(1, markedFileCount)
+        assertEquals(
+            listOf(
+                Triple(MarkState.REVIEWED, lineTwoStart, lineTwoStart + "line two".length),
+                Triple(MarkState.TO_REVIEW, lineTwoStart + "line two".length + 1, lineThreeEnd),
+                Triple(MarkState.TO_REVIEW, documentText.indexOf("line five"), documentText.indexOf("line five") + "line five".length),
+            ),
+            marks(document),
+        )
+    }
+
+    fun `test marking changed lines in a file that is not open shows the marks when it is opened`() {
+        val file = myFixture.addFileToProject("Closed.txt", documentText).virtualFile
+
+        reviewMarks().markChangedLinesToReview(mapOf(file to listOf(LineRange(1, 2))))
+
+        assertEquals(
+            listOf(StoredMark(file.url, lineTwoStart, "line two\nline three", "TO_REVIEW")),
+            reviewMarks().state.marks,
+        )
+    }
+
+    fun `test starting a pull request review marks its changed lines and keeps the session`() {
+        val file = myFixture.configureByText("Example.txt", documentText).virtualFile
+
+        val markedFileCount = reviewMarks().startPullRequestReview(pullRequestSession(), mapOf(file to listOf(LineRange(1, 2))))
+
+        assertEquals(1, markedFileCount)
+        assertEquals(7, reviewMarks().pullRequest?.number)
+        assertEquals(listOf(Triple(MarkState.TO_REVIEW, lineTwoStart, lineThreeEnd)), marks(myFixture.editor.document))
+        assertEquals(7, reviewMarks().state.pullRequest?.number)
+    }
+
+    fun `test notes become review comments on their line with a path relative to the repository`() {
+        myFixture.configureByText("Example.txt", documentText)
+        val document = myFixture.editor.document
+        reviewMarks().startPullRequestReview(pullRequestSession(), emptyMap())
+        reviewMarks().setNoteAt(document, lineThreeStart, NoteDetails("Why retry here?", floating = false, includeInPullRequest = true))
+        reviewMarks().setNoteAt(document, lineTwoStart, NoteDetails("private reminder", floating = false, includeInPullRequest = false))
+
+        val comments = reviewMarks().pullRequestComments()
+
+        assertEquals(listOf(ReviewComment("Example.txt", 3, "Why retry here?")), comments)
+    }
+
+    fun `test there are no review comments when no pull request is being reviewed`() {
+        myFixture.configureByText("Example.txt", documentText)
+        reviewMarks().setNoteAt(myFixture.editor.document, lineThreeStart, plainNote)
+
+        assertEquals(emptyList<ReviewComment>(), reviewMarks().pullRequestComments())
+    }
+
+    fun `test ending the pull request review keeps the marks and notes`() {
+        val file = myFixture.configureByText("Example.txt", documentText).virtualFile
+        val document = myFixture.editor.document
+        reviewMarks().startPullRequestReview(pullRequestSession(), mapOf(file to listOf(LineRange(1, 2))))
+        reviewMarks().setNoteAt(document, lineThreeStart, plainNote)
+
+        reviewMarks().endPullRequestReview()
+
+        assertNull(reviewMarks().pullRequest)
+        assertEquals(1, marks(document).size)
+        assertEquals(1, ReviewNoteHighlighters.inDocument(project, document).size)
+    }
+
+    fun `test marking the method around the caret marks the whole method`() {
+        val javaText = "class Sample {\n    int total(int a, int b) {\n        int sum = a + b;\n        return sum;\n    }\n}\n"
+        myFixture.configureByText("Sample.java", javaText)
+        myFixture.editor.caretModel.moveToOffset(javaText.indexOf("int sum"))
+
+        val range = findEnclosingDeclarationRange(myFixture.file, myFixture.editor.document, myFixture.editor.caretModel.offset)
+
+        val methodStart = javaText.indexOf("    int total")
+        val methodEnd = javaText.indexOf("    }\n") + "    }".length
+        assertEquals(TextRange(methodStart, methodEnd), range)
     }
 
     fun `test marking the declaration around the caret finds nothing in plain text`() {

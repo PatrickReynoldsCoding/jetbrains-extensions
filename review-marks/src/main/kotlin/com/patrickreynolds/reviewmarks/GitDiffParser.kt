@@ -19,6 +19,34 @@ fun parseChangedLines(diffWithNoContext: String): Map<String, List<LineRange>> {
     return changedLinesByPath
 }
 
+fun parseChangedLinesFromPatch(filePatch: String): List<LineRange> {
+    val addedLineNumbers = mutableListOf<Int>()
+    var nextNewLine = 0
+    filePatch.lineSequence().forEach { patchLine ->
+        val hunkHeader = HUNK_HEADER.find(patchLine)
+        when {
+            hunkHeader != null -> nextNewLine = hunkHeader.groupValues[1].toInt() - 1
+            patchLine.startsWith("+") -> addedLineNumbers += nextNewLine++
+            patchLine.startsWith("-") || patchLine.startsWith("\\") -> Unit
+            else -> nextNewLine++
+        }
+    }
+    return joinConsecutiveLines(addedLineNumbers)
+}
+
+private fun joinConsecutiveLines(lineNumbers: List<Int>): List<LineRange> {
+    val ranges = mutableListOf<LineRange>()
+    lineNumbers.forEach { lineNumber ->
+        val lastRange = ranges.lastOrNull()
+        if (lastRange != null && lastRange.lastLine + 1 == lineNumber) {
+            ranges[ranges.lastIndex] = LineRange(lastRange.firstLine, lineNumber)
+        } else {
+            ranges += LineRange(lineNumber, lineNumber)
+        }
+    }
+    return ranges
+}
+
 private fun pathOfChangedFile(newFileLine: String): String? =
     if (newFileLine.startsWith(NEW_FILE_PREFIX)) newFileLine.removePrefix(NEW_FILE_PREFIX).substringBefore('\t') else null
 

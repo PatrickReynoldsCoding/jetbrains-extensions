@@ -15,16 +15,23 @@ import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.TextRange
 import javax.swing.Icon
 
-private val NOTE_TEXT = Key.create<String>("reviewmarks.noteText")
+private val NOTE_DETAILS = Key.create<NoteDetails>("reviewmarks.noteDetails")
+
+data class NoteDetails(
+    val text: String,
+    val floating: Boolean,
+    val includeInPullRequest: Boolean,
+)
 
 data class ReviewNote(val highlighter: RangeHighlighter) {
-    val text: String get() = highlighter.getUserData(NOTE_TEXT).orEmpty()
+    val details: NoteDetails get() = highlighter.getUserData(NOTE_DETAILS) ?: NoteDetails("", floating = false, includeInPullRequest = true)
+    val text: String get() = details.text
     val range: TextRange get() = TextRange(highlighter.startOffset, highlighter.endOffset)
 }
 
 object ReviewNoteHighlighters {
 
-    fun add(project: Project, document: Document, codeRange: TextRange, noteText: String) {
+    fun add(project: Project, document: Document, codeRange: TextRange, details: NoteDetails) {
         val markupModel = DocumentMarkupModel.forDocument(document, project, true)
         val highlighter = markupModel.addRangeHighlighter(
             codeRange.startOffset,
@@ -33,19 +40,19 @@ object ReviewNoteHighlighters {
             TextAttributes(),
             HighlighterTargetArea.LINES_IN_RANGE,
         )
-        highlighter.putUserData(NOTE_TEXT, noteText)
+        highlighter.putUserData(NOTE_DETAILS, details)
         highlighter.gutterIconRenderer = NoteGutterIcon(project, document, highlighter)
     }
 
     fun inDocument(project: Project, document: Document): List<ReviewNote> {
         val markupModel = DocumentMarkupModel.forDocument(document, project, false) ?: return emptyList()
         return markupModel.allHighlighters
-            .filter { it.getUserData(NOTE_TEXT) != null && it.isValid }
+            .filter { it.getUserData(NOTE_DETAILS) != null && it.isValid }
             .map { ReviewNote(it) }
     }
 
-    fun changeText(note: ReviewNote, newText: String) {
-        note.highlighter.putUserData(NOTE_TEXT, newText)
+    fun changeDetails(note: ReviewNote, newDetails: NoteDetails) {
+        note.highlighter.putUserData(NOTE_DETAILS, newDetails)
     }
 
     fun remove(project: Project, document: Document, note: ReviewNote) {
@@ -61,7 +68,7 @@ private class NoteGutterIcon(
 
     override fun getIcon(): Icon = AllIcons.General.Balloon
 
-    override fun getTooltipText(): String? = highlighter.getUserData(NOTE_TEXT)
+    override fun getTooltipText(): String? = highlighter.getUserData(NOTE_DETAILS)?.text
 
     override fun isNavigateAction(): Boolean = true
 

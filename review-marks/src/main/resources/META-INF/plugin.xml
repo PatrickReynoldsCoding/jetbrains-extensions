@@ -2,9 +2,10 @@
     <id>com.patrickreynolds.reviewmarks</id>
     <name>Review Marks</name>
     <vendor>Patrick Reynolds</vendor>
-    <description>Mark code as reviewed. A line you edit inside reviewed code turns amber until you review it again.</description>
+    <description>Mark code to review and as reviewed while you read. A line you edit inside reviewed code turns amber until you review it again. Review a branch or a GitHub pull request and post your notes as a review.</description>
 
     <depends>com.intellij.modules.platform</depends>
+    <depends>org.jetbrains.plugins.github</depends>
 
     <extensions defaultExtensionNs="com.intellij">
         <editorFactoryListener implementation="com.patrickreynolds.reviewmarks.ReviewMarksEditorListener"/>
@@ -22,6 +23,10 @@
     </extensions>
 
     <actions>
+        <action id="ReviewMarks.MarkAsToReview"
+                class="com.patrickreynolds.reviewmarks.MarkAsToReviewAction"
+                text="Mark Selection to Review"
+                description="Mark the selection (or the method or class at the caret) as code to review. It is listed in the To review tab."/>
         <action id="ReviewMarks.MarkSelectionAsReviewed"
                 class="com.patrickreynolds.reviewmarks.MarkSelectionAsReviewedAction"
                 text="Mark Selection as Reviewed"
@@ -30,23 +35,18 @@
                 class="com.patrickreynolds.reviewmarks.MarkEnclosingDeclarationAsReviewedAction"
                 text="Mark Method or Class at Caret as Reviewed"
                 description="Mark the innermost multi-line method, class or other named declaration around the caret as reviewed."/>
-        <action id="ReviewMarks.ClearReviewedMark"
-                class="com.patrickreynolds.reviewmarks.ClearReviewedMarkAction"
-                text="Clear Mark at Caret"
-                description="Remove the reviewed or changed mark under the caret."/>
-        <action id="ReviewMarks.GoToNextRunToReview"
-                class="com.patrickreynolds.reviewmarks.GoToNextRunToReviewAction"
-                text="Go to Next Code to Review"
-                description="Move the caret to the next code that is not reviewed or has changed since you reviewed it."/>
-        <action id="ReviewMarks.ToggleFocusMode"
-                class="com.patrickreynolds.reviewmarks.ToggleFocusModeAction"
-                text="Focus Mode: Fade Reviewed Code"
-                description="Fade the text of reviewed code so that only code you have not read stands out."/>
-
         <action id="ReviewMarks.MarkAndGoToNext"
                 class="com.patrickreynolds.reviewmarks.MarkAndGoToNextAction"
                 text="Mark as Reviewed and Go to Next"
                 description="Mark the selection (or the method or class at the caret) as reviewed, then move to the next code to review."/>
+        <action id="ReviewMarks.ClearReviewedMark"
+                class="com.patrickreynolds.reviewmarks.ClearReviewedMarkAction"
+                text="Clear Mark at Caret"
+                description="Remove the mark under the caret."/>
+        <action id="ReviewMarks.GoToNextRunToReview"
+                class="com.patrickreynolds.reviewmarks.GoToNextRunToReviewAction"
+                text="Go to Next Code to Review"
+                description="Move the caret to the next code marked to review or changed since you reviewed it."/>
         <action id="ReviewMarks.GoBackToLastStop"
                 class="com.patrickreynolds.reviewmarks.GoBackToLastStopAction"
                 text="Go Back to Where I Stopped"
@@ -56,19 +56,27 @@
                 text="Focus Mode: Fold Reviewed Code"
                 description="Fold reviewed code into a single line so that only code you have not read is on screen."/>
 
-        <action id="ReviewMarks.ReviewOnlyBranchChanges"
-                class="com.patrickreynolds.reviewmarks.ReviewOnlyBranchChangesAction"
-                text="Review Only Branch Changes..."
-                description="Count only the lines changed since a base branch as code to review. Everything else is faded."/>
-        <action id="ReviewMarks.StopReviewingOnlyBranchChanges"
-                class="com.patrickreynolds.reviewmarks.StopReviewingOnlyBranchChangesAction"
-                text="Stop Reviewing Only Branch Changes"
-                description="Count all code again."/>
+        <action id="ReviewMarks.ReviewBranchChanges"
+                class="com.patrickreynolds.reviewmarks.ReviewBranchChangesAction"
+                text="Review Branch Changes..."
+                description="Pick a branch and mark the lines changed since you branched from it to review."/>
+        <action id="ReviewMarks.StartPullRequestReview"
+                class="com.patrickreynolds.reviewmarks.StartPullRequestReviewAction"
+                text="Start PR Review..."
+                description="Find the GitHub pull request of the current branch and mark its changed lines to review. Your notes become review comments."/>
+        <action id="ReviewMarks.PostPullRequestReview"
+                class="com.patrickreynolds.reviewmarks.PostPullRequestReviewAction"
+                text="Post PR Review..."
+                description="Send your notes as a review on the pull request."/>
+        <action id="ReviewMarks.EndPullRequestReview"
+                class="com.patrickreynolds.reviewmarks.EndPullRequestReviewAction"
+                text="End PR Review"
+                description="Stop the PR review without posting it."/>
 
         <action id="ReviewMarks.AddOrEditNote"
                 class="com.patrickreynolds.reviewmarks.AddOrEditNoteAction"
                 text="Add or Edit Note on This Line..."
-                description="Park a short note on this line, such as a question to ask later. Notes are listed in the Review Notes tool window."/>
+                description="Park a note on this line. It can float above the code and, in a PR review, become a review comment."/>
 
         <action id="ReviewMarks.ShowReviewSummary"
                 class="com.patrickreynolds.reviewmarks.ShowReviewSummaryAction"
@@ -76,6 +84,7 @@
                 description="Show what you reviewed today and what is left to review."/>
 
         <group id="ReviewMarks.Menu" text="Review Marks" popup="true">
+            <reference ref="ReviewMarks.MarkAsToReview"/>
             <reference ref="ReviewMarks.MarkAndGoToNext"/>
             <reference ref="ReviewMarks.MarkSelectionAsReviewed"/>
             <reference ref="ReviewMarks.MarkEnclosingDeclarationAsReviewed"/>
@@ -86,11 +95,12 @@
             <reference ref="ReviewMarks.AddOrEditNote"/>
             <reference ref="ReviewMarks.ShowReviewSummary"/>
             <separator/>
-            <reference ref="ReviewMarks.ToggleFocusMode"/>
             <reference ref="ReviewMarks.ToggleFoldMode"/>
             <separator/>
-            <reference ref="ReviewMarks.ReviewOnlyBranchChanges"/>
-            <reference ref="ReviewMarks.StopReviewingOnlyBranchChanges"/>
+            <reference ref="ReviewMarks.ReviewBranchChanges"/>
+            <reference ref="ReviewMarks.StartPullRequestReview"/>
+            <reference ref="ReviewMarks.PostPullRequestReview"/>
+            <reference ref="ReviewMarks.EndPullRequestReview"/>
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </group>
     </actions>

@@ -6,10 +6,9 @@ fun newlyReviewedLineCount(
     documentText: String,
     markedRange: TextRange,
     reviewedRangesBefore: List<TextRange>,
-    outOfScopeRanges: List<TextRange>,
 ): Int {
-    val lineNumbersNotReviewedBefore = linesNeedingReview(documentText, reviewedRangesBefore, outOfScopeRanges).toSet()
+    val reviewedAreasBefore = joinAcrossWhitespace(documentText, reviewedRangesBefore)
     return codeLinesOf(documentText).count { codeLine ->
-        codeLine.lineNumber in lineNumbersNotReviewedBefore && markedRange.contains(codeLine.codeRange)
+        markedRange.contains(codeLine.codeRange) && reviewedAreasBefore.none { it.contains(codeLine.codeRange) }
     }
 }

@@ -34,7 +34,6 @@ import java.awt.event.MouseEvent
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JProgressBar
-import javax.swing.JTree
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
@@ -54,9 +53,10 @@ class ReviewMarksPanel(
     private val reviewMarks = project.service<ReviewMarksService>()
     private val pauseSettings = service<ReviewMarksSettings>().state
 
-    private val fadeCheckBox = JBCheckBox("Fade reviewed")
     private val foldCheckBox = JBCheckBox("Fold reviewed")
-    private val branchCheckBox = JBCheckBox("Only branch changes")
+    private val pullRequestLabel = JBLabel()
+    private val postReviewButton = JButton("Post review…")
+    private val endPullRequestButton = JButton("End PR")
     private val progressLabel = JBLabel()
     private val progressBar = JProgressBar(0, 100)
     private val tabs = JBTabbedPane()
@@ -82,10 +82,8 @@ class ReviewMarksPanel(
     fun refresh() {
         refreshingFromState = true
         try {
-            fadeCheckBox.isSelected = reviewMarks.focusMode
             foldCheckBox.isSelected = reviewMarks.foldMode
-            branchCheckBox.isSelected = reviewMarks.scopeBaseRef != null
-            branchCheckBox.toolTipText = reviewMarks.scopeBaseRef?.let { "Comparing with $it" }
+            refreshPullRequestBanner()
             pauseCheckBox.isSelected = pauseSettings.pauseRemindersOn
             pauseLimitsLabel.text = pauseLimitsText(pauseSettings.minutesBetweenPauses, pauseSettings.blocksBetweenPauses)
             refreshProgress()
@@ -101,9 +99,9 @@ class ReviewMarksPanel(
         topPanel.layout = BoxLayout(topPanel, BoxLayout.Y_AXIS)
         topPanel.border = JBUI.Borders.empty(4)
         topPanel.add(buttonRow(
-            "Mark & next" to "ReviewMarks.MarkAndGoToNext",
-            "Mark" to "ReviewMarks.MarkSelectionAsReviewed",
-            "Method" to "ReviewMarks.MarkEnclosingDeclarationAsReviewed",
+            "To review" to "ReviewMarks.MarkAsToReview",
+            "Reviewed" to "ReviewMarks.MarkSelectionAsReviewed",
+            "Reviewed & next" to "ReviewMarks.MarkAndGoToNext",
             "Clear" to "ReviewMarks.ClearReviewedMark",
         ))
         topPanel.add(buttonRow(
@@ -111,17 +109,21 @@ class ReviewMarksPanel(
             "Where I stopped" to "ReviewMarks.GoBackToLastStop",
             "Note" to "ReviewMarks.AddOrEditNote",
         ))
-        topPanel.add(checkBoxRow(fadeCheckBox, foldCheckBox, branchCheckBox))
+        topPanel.add(buttonRow(
+            "Branch…" to "ReviewMarks.ReviewBranchChanges",
+            "PR review…" to "ReviewMarks.StartPullRequestReview",
+        ).also { row ->
+            postReviewButton.addActionListener { runAction("ReviewMarks.PostPullRequestReview") }
+            endPullRequestButton.addActionListener { runAction("ReviewMarks.EndPullRequestReview") }
+            row.add(postReviewButton)
+            row.add(endPullRequestButton)
+        })
+        topPanel.add(pullRequestLabel)
+        topPanel.add(checkBoxRow(foldCheckBox))
         topPanel.add(progressLabel)
         topPanel.add(progressBar)
 
-        fadeCheckBox.addActionListener { if (!refreshingFromState) reviewMarks.changeFocusMode(fadeCheckBox.isSelected) }
         foldCheckBox.addActionListener { if (!refreshingFromState) reviewMarks.changeFoldMode(foldCheckBox.isSelected) }
-        branchCheckBox.addActionListener {
-            if (refreshingFromState) return@addActionListener
-            runAction(if (branchCheckBox.isSelected) "ReviewMarks.ReviewOnlyBranchChanges" else "ReviewMarks.StopReviewingOnlyBranchChanges")
-            refresh()
-        }
         return topPanel
     }
 
@@ -152,11 +154,12 @@ class ReviewMarksPanel(
         todayText.border = JBUI.Borders.empty(8)
         tabs.addChangeListener { refreshSelectedTab() }
 
-        toReviewTree.emptyText.text = "Nothing left to review in the files you are reviewing."
+        toReviewTree.emptyText.text = "Nothing marked to review. Select code and press To review."
         reviewedTree.emptyText.text = "Nothing marked as reviewed yet."
-        onOpenBlock(toReviewTree)
-        onOpenBlock(reviewedTree)
-        onClearBlock(reviewedTree)
+        listOf(toReviewTree, reviewedTree).forEach { tree ->
+            onOpenBlock(tree)
+            onClearBlock(tree)
+        }
         return tabs
     }
 
@@ -165,8 +168,8 @@ class ReviewMarksPanel(
         clearAllButton.addActionListener {
             val confirmed = Messages.showYesNoDialog(
                 project,
-                "Remove every reviewed mark in this project? Notes are kept.",
-                "Clear All Reviewed Marks",
+                "Remove every mark in this project (to review, reviewed and changed)? Notes are kept.",
+                "Clear All Marks",
                 null,
             ) == Messages.YES
             if (confirmed) reviewMarks.clearAllMarks()
@@ -185,7 +188,10 @@ class ReviewMarksPanel(
     private fun createNotesTab(): JBScrollPane {
         notesList.emptyText.text = "No notes yet. Click Note, or right-click a line, Review Marks, Add or Edit Note."
         notesList.cellRenderer = SimpleListCellRenderer.create { label, note, _ ->
-            label.text = "${note.text}   —   ${note.fileUrl.substringAfterLast('/')}: ${note.anchorText.take(ANCHOR_PREVIEW_LENGTH)}"
+            val floatingMarker = if (note.floating) "▲ " else ""
+            val commentMarker = if (reviewMarks.pullRequest != null && note.includeInPullRequest) "💬 " else ""
+            label.text = "$floatingMarker$commentMarker${note.text.lineSequence().first()}   —   " +
+                "${note.fileUrl.substringAfterLast('/')}: ${note.anchorText.take(ANCHOR_PREVIEW_LENGTH)}"
         }
         notesList.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(event: MouseEvent) {
@@ -238,6 +244,18 @@ class ReviewMarksPanel(
         if (isShowing) refresh()
     }
 
+    private fun refreshPullRequestBanner() {
+        val session = reviewMarks.pullRequest
+        pullRequestLabel.isVisible = session != null
+        postReviewButton.isVisible = session != null
+        endPullRequestButton.isVisible = session != null
+        if (session != null) {
+            val commentCount = reviewMarks.pullRequestComments().size
+            pullRequestLabel.text = "PR #${session.number}: ${session.title}  ·  $commentCount comments"
+            pullRequestLabel.toolTipText = "${session.owner}/${session.repository} as ${session.accountName}"
+        }
+    }
+
     private fun refreshProgress() {
         val editor = FileEditorManager.getInstance(project).selectedTextEditor
         if (editor == null) {
@@ -247,7 +265,7 @@ class ReviewMarksPanel(
         }
         val fileName = editor.virtualFile?.name ?: "This file"
         val progress = reviewMarks.progressOf(editor.document)
-        progressLabel.text = if (progress.codeLineCount == 0) "$fileName — no code lines to review" else "$fileName — ${progress.statusText()}"
+        progressLabel.text = if (progress.markedLineCount == 0) "$fileName — no code marked yet" else "$fileName — ${progress.statusText()}"
         progressBar.value = progress.percentReviewed
     }
 
@@ -257,7 +275,7 @@ class ReviewMarksPanel(
 
     private fun refreshSelectedTab() {
         when (tabs.selectedIndex) {
-            TO_REVIEW_TAB -> showBlocks(toReviewTree, reviewMarks.blocksToReview(currentFileUrl()))
+            TO_REVIEW_TAB -> showBlocks(toReviewTree, reviewMarks.blocksToReview())
             REVIEWED_TAB -> {
                 val reviewedBlocks = reviewMarks.reviewedBlocks()
                 reviewedHeadingLabel.text = "${reviewedBlocks.sumOf { it.codeLineCount }} lines in ${reviewedBlocks.size} files"
@@ -267,8 +285,6 @@ class ReviewMarksPanel(
             TODAY_TAB -> todayText.text = reviewMarks.reviewSummaryToday().text()
         }
     }
-
-    private fun currentFileUrl(): String? = FileEditorManager.getInstance(project).selectedFiles.firstOrNull()?.url
 
     private fun showBlocks(tree: Tree, filesWithBlocks: List<FileBlocks>) {
         val root = DefaultMutableTreeNode()
@@ -289,7 +305,7 @@ class ReviewMarksPanel(
         return tree
     }
 
-    private fun selectedBlock(tree: JTree): BlockOfFile? =
+    private fun selectedBlock(tree: Tree): BlockOfFile? =
         (tree.lastSelectedPathComponent as? DefaultMutableTreeNode)?.userObject as? BlockOfFile
 
     private fun onOpenBlock(tree: Tree) {
@@ -311,7 +327,7 @@ class ReviewMarksPanel(
                 val deleteKeyPressed = event.keyCode == KeyEvent.VK_DELETE || event.keyCode == KeyEvent.VK_BACK_SPACE
                 val block = selectedBlock(tree)
                 if (deleteKeyPressed && block != null) {
-                    reviewMarks.clearReviewedBlock(block.fileUrl, TextRange(block.row.startOffset, block.row.endOffset))
+                    reviewMarks.clearMarkedBlock(block.fileUrl, TextRange(block.row.startOffset, block.row.endOffset))
                 }
             }
         })
