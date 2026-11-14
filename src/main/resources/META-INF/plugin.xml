@@ -8,6 +8,10 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <editorFactoryListener implementation="com.patrickreynolds.reviewmarks.ReviewMarksEditorListener"/>
+        <toolWindow id="Review Notes"
+                    anchor="right"
+                    icon="AllIcons.General.Balloon"
+                    factoryClass="com.patrickreynolds.reviewmarks.ReviewNotesToolWindowFactory"/>
         <statusBarWidgetFactory id="ReviewMarks.Progress"
                                 implementation="com.patrickreynolds.reviewmarks.ReviewProgressWidgetFactory"/>
     </extensions>
@@ -56,6 +60,11 @@
                 text="Stop Reviewing Only Branch Changes"
                 description="Count all code again."/>
 
+        <action id="ReviewMarks.AddOrEditNote"
+                class="com.patrickreynolds.reviewmarks.AddOrEditNoteAction"
+                text="Add or Edit Note on This Line..."
+                description="Park a short note on this line, such as a question to ask later. Notes are listed in the Review Notes tool window."/>
+
         <group id="ReviewMarks.Menu" text="Review Marks" popup="true">
             <reference ref="ReviewMarks.MarkAndGoToNext"/>
             <reference ref="ReviewMarks.MarkSelectionAsReviewed"/>
@@ -64,6 +73,7 @@
             <separator/>
             <reference ref="ReviewMarks.GoToNextRunToReview"/>
             <reference ref="ReviewMarks.GoBackToLastStop"/>
+            <reference ref="ReviewMarks.AddOrEditNote"/>
             <separator/>
             <reference ref="ReviewMarks.ToggleFocusMode"/>
             <reference ref="ReviewMarks.ToggleFoldMode"/>

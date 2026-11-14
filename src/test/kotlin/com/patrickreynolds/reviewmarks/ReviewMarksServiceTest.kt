@@ -313,6 +313,99 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
         assertNull(reviewMarks().scopeBaseRef)
     }
 
+    fun `test a note puts a gutter icon on its line and shows the note as the tooltip`() {
+        myFixture.configureByText("Notes.txt", documentText)
+        val document = myFixture.editor.document
+
+        reviewMarks().setNoteAt(document, lineThreeStart + 2, "ask why this retries")
+
+        val note = ReviewNoteHighlighters.inDocument(project, document).single()
+        assertEquals("ask why this retries", note.text)
+        assertEquals("line three", document.getText(note.range))
+        assertEquals("ask why this retries", note.highlighter.gutterIconRenderer?.tooltipText)
+    }
+
+    fun `test setting the note again changes its text and an empty note deletes it`() {
+        myFixture.configureByText("Notes.txt", documentText)
+        val document = myFixture.editor.document
+        reviewMarks().setNoteAt(document, lineThreeStart, "first")
+
+        reviewMarks().setNoteAt(document, lineThreeStart + 4, "second")
+        assertEquals(listOf("second"), ReviewNoteHighlighters.inDocument(project, document).map { it.text })
+        assertEquals("second", reviewMarks().noteTextAt(document, lineThreeStart))
+
+        reviewMarks().setNoteAt(document, lineThreeStart, "")
+        assertEquals(emptyList<ReviewNote>(), ReviewNoteHighlighters.inDocument(project, document))
+    }
+
+    fun `test a note can only be added on a line of code`() {
+        myFixture.configureByText("Gap.txt", "one\n\ntwo\n")
+        val document = myFixture.editor.document
+
+        assertFalse(reviewMarks().canAddNoteAt(document, 4))
+        assertTrue(reviewMarks().canAddNoteAt(document, 0))
+    }
+
+    fun `test a note stays on its line when lines are added above it`() {
+        myFixture.configureByText("Notes.txt", documentText)
+        val document = myFixture.editor.document
+        reviewMarks().setNoteAt(document, lineThreeStart, "keep")
+
+        edit { document.insertString(0, "new line\n") }
+
+        val note = ReviewNoteHighlighters.inDocument(project, document).single()
+        assertEquals("line three", document.getText(note.range))
+    }
+
+    fun `test saved state holds the notes and listing them shows the notes of open files`() {
+        myFixture.configureByText("Notes.txt", documentText)
+        val document = myFixture.editor.document
+        reviewMarks().setNoteAt(document, lineThreeStart, "ask Sam")
+
+        val savedNotes = reviewMarks().state.notes
+        val listedNotes = reviewMarks().allNotes()
+
+        assertEquals(listOf("ask Sam"), savedNotes.map { it.text })
+        assertEquals(listOf("line three"), savedNotes.map { it.anchorText })
+        assertEquals(lineThreeStart, savedNotes.single().startOffset)
+        assertEquals(savedNotes, listedNotes)
+    }
+
+    fun `test a saved note comes back when the file is opened and its line is unchanged`() {
+        val file = myFixture.addFileToProject("SavedNotes.txt", documentText).virtualFile
+        reviewMarks().loadState(
+            ReviewMarksState(notes = mutableListOf(StoredNote(file.url, lineThreeStart, "line three", "ask Sam"))),
+        )
+
+        myFixture.openFileInEditor(file)
+
+        val note = ReviewNoteHighlighters.inDocument(project, myFixture.editor.document).single()
+        assertEquals("ask Sam", note.text)
+        assertEquals(TextRange(lineThreeStart, lineThreeEnd), note.range)
+    }
+
+    fun `test a saved note is dropped when its line was edited while the file was closed`() {
+        val file = myFixture.addFileToProject("EditedNotes.txt", documentText.replace("line three", "line 3")).virtualFile
+        reviewMarks().loadState(
+            ReviewMarksState(notes = mutableListOf(StoredNote(file.url, lineThreeStart, "line three", "ask Sam"))),
+        )
+
+        myFixture.openFileInEditor(file)
+
+        assertEquals(emptyList<ReviewNote>(), ReviewNoteHighlighters.inDocument(project, myFixture.editor.document))
+    }
+
+    fun `test deleting a note from the list removes it from the open file`() {
+        myFixture.configureByText("Notes.txt", documentText)
+        val document = myFixture.editor.document
+        reviewMarks().setNoteAt(document, lineThreeStart, "ask Sam")
+
+        reviewMarks().deleteNote(reviewMarks().allNotes().single())
+
+        assertEquals(emptyList<ReviewNote>(), ReviewNoteHighlighters.inDocument(project, document))
+        assertEquals(emptyList<StoredNote>(), reviewMarks().allNotes())
+    }
+
     fun `test marking the declaration around the caret finds nothing in plain text`() {
         myFixture.configureByText("Plain.txt", documentText)
         val range = findEnclosingDeclarationRange(myFixture.file, myFixture.editor.document, 3)

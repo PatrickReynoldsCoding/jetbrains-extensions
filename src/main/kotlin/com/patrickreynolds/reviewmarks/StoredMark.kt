@@ -15,4 +15,5 @@ class ReviewMarksState(
     var foldMode: Boolean = false,
     var lastStop: StoredStop? = null,
     var scope: StoredScope? = null,
+    var notes: MutableList<StoredNote> = mutableListOf(),
 )
