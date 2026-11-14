@@ -14,4 +14,5 @@ class ReviewMarksState(
     var focusMode: Boolean = false,
     var foldMode: Boolean = false,
     var lastStop: StoredStop? = null,
+    var scope: StoredScope? = null,
 )

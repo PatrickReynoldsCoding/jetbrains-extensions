@@ -52,6 +52,10 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
 
     private var lastStop: StoredStop? = null
 
+    private var scope: StoredScope? = null
+
+    val scopeBaseRef: String? get() = scope?.baseRef
+
     init {
         EditorFactory.getInstance().eventMulticaster.addDocumentListener(
             object : DocumentListener {
@@ -97,6 +101,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             documentText = document.text,
             reviewedRanges = rangesWithState(marks, MarkState.REVIEWED),
             changedRanges = rangesWithState(marks, MarkState.CHANGED),
+            outOfScopeRanges = OutOfScopeHighlighters.rangesIn(project, document),
         )
     }
 
@@ -104,7 +109,8 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         val document = editor.document
         val reviewedRanges = rangesWithState(ReviewedMarkHighlighters.inDocument(project, document), MarkState.REVIEWED)
         val currentLine = editor.caretModel.logicalPosition.line
-        val nextRun = nextRunToReview(linesNeedingReview(document.text, reviewedRanges), currentLine)
+        val outOfScopeRanges = OutOfScopeHighlighters.rangesIn(project, document)
+        val nextRun = nextRunToReview(linesNeedingReview(document.text, reviewedRanges, outOfScopeRanges), currentLine)
         if (nextRun == null) {
             HintManager.getInstance().showInformationHint(editor, "Everything in this file is reviewed")
             return
@@ -143,17 +149,30 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         if (document.getUserData(DOCUMENT_SHOWS_STORED_MARKS) == true) return
         document.putUserData(DOCUMENT_SHOWS_STORED_MARKS, true)
 
-        val storedMarks = storedMarksByFileUrl[file.url] ?: return
         val documentText = document.text
-        storedMarks.forEach { storedMark ->
+        storedMarksByFileUrl[file.url].orEmpty().forEach { storedMark ->
             val startOffset = locateMarkedText(documentText, storedMark.markedText, storedMark.startOffset)
             if (startOffset != null) {
                 val range = TextRange(startOffset, startOffset + storedMark.markedText.length)
                 ReviewedMarkHighlighters.add(project, document, range, MarkState.valueOf(storedMark.state), focusMode)
             }
         }
+        applyScopeTo(document, file)
         storeMarksOf(document, file)
         afterChangesUpdate.request()
+    }
+
+    fun startReviewingOnlyChanges(baseRef: String, changedLinesByPath: Map<String, List<LineRange>>) {
+        scope = StoredScope(
+            baseRef = baseRef,
+            files = changedLinesByPath.map { (path, changedLines) -> StoredScopeFile(path, changedLines.toMutableList()) }.toMutableList(),
+        )
+        applyScopeToOpenDocuments()
+    }
+
+    fun stopReviewingOnlyChanges() {
+        scope = null
+        applyScopeToOpenDocuments()
     }
 
     fun storeMarksOf(document: Document, file: VirtualFile) {
@@ -186,6 +205,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             focusMode = focusMode,
             foldMode = foldMode,
             lastStop = lastStop,
+            scope = scope,
         )
     }
 
@@ -195,6 +215,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         focusMode = state.focusMode
         foldMode = state.foldMode
         lastStop = state.lastStop
+        scope = state.scope
     }
 
     override fun dispose() = Unit
@@ -239,6 +260,24 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
     private fun refreshProgressWidget() {
         val statusBar = WindowManager.getInstance().getStatusBar(project) ?: return
         (statusBar.getWidget(ReviewProgressWidget.WIDGET_ID) as? ReviewProgressWidget)?.refresh()
+    }
+
+    private fun applyScopeToOpenDocuments() {
+        FileEditorManager.getInstance(project).openFiles.forEach { openFile ->
+            val openDocument = FileDocumentManager.getInstance().getCachedDocument(openFile) ?: return@forEach
+            applyScopeTo(openDocument, openFile)
+        }
+        afterChangesUpdate.request()
+    }
+
+    private fun applyScopeTo(document: Document, file: VirtualFile) {
+        val activeScope = scope
+        if (activeScope == null) {
+            OutOfScopeHighlighters.replace(project, document, emptyList())
+            return
+        }
+        val changedLines = activeScope.files.firstOrNull { it.path == file.path }?.changedLines.orEmpty()
+        OutOfScopeHighlighters.replace(project, document, outOfScopeRanges(document.text, changedLines))
     }
 
     private fun refoldOpenDocuments() {

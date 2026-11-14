@@ -10,7 +10,7 @@ class ReviewProgressTest {
 
     @Test
     fun `counts only code lines, not empty lines`() {
-        val progress = reviewProgress(documentText, reviewedRanges = emptyList(), changedRanges = emptyList())
+        val progress = reviewProgress(documentText, reviewedRanges = emptyList(), changedRanges = emptyList(), outOfScopeRanges = emptyList())
         assertEquals(ReviewProgress(reviewedLineCount = 0, codeLineCount = 4, changedLineCount = 0), progress)
     }
 
@@ -19,7 +19,7 @@ class ReviewProgressTest {
         val reviewedRange = TextRange(0, documentText.indexOf("second") + "second".length)
         val changedRange = TextRange(documentText.indexOf("third"), documentText.indexOf("third") + 5)
 
-        val progress = reviewProgress(documentText, listOf(reviewedRange), listOf(changedRange))
+        val progress = reviewProgress(documentText, listOf(reviewedRange), listOf(changedRange), outOfScopeRanges = emptyList())
 
         assertEquals(ReviewProgress(reviewedLineCount = 2, codeLineCount = 4, changedLineCount = 1), progress)
     }

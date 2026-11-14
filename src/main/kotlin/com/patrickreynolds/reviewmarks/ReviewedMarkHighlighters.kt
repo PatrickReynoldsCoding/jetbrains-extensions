@@ -17,7 +17,7 @@ private val MARK_STATE = Key.create<MarkState>("reviewmarks.markState")
 
 private val REVIEWED_BACKGROUND = JBColor(Color(0xD8, 0xF0, 0xD8), Color(0x2A, 0x42, 0x2A))
 private val REVIEWED_STRIPE = JBColor(Color(0x5C, 0xB8, 0x5C), Color(0x4A, 0x8F, 0x4A))
-private val REVIEWED_FADED_TEXT = JBColor(Color(0x9A, 0x9A, 0x9A), Color(0x70, 0x70, 0x70))
+internal val FADED_TEXT_COLOR = JBColor(Color(0x9A, 0x9A, 0x9A), Color(0x70, 0x70, 0x70))
 
 private val CHANGED_BACKGROUND = JBColor(Color(0xFF, 0xE3, 0xA8), Color(0x5C, 0x45, 0x18))
 private val CHANGED_STRIPE = JBColor(Color(0xE0, 0xA0, 0x30), Color(0xC0, 0x88, 0x20))
@@ -64,7 +64,7 @@ object ReviewedMarkHighlighters {
     private fun textAttributesFor(state: MarkState, focusMode: Boolean): TextAttributes {
         val attributes = when {
             state == MarkState.CHANGED -> TextAttributes(null, CHANGED_BACKGROUND, null, null, Font.PLAIN)
-            focusMode -> TextAttributes(REVIEWED_FADED_TEXT, null, null, null, Font.PLAIN)
+            focusMode -> TextAttributes(FADED_TEXT_COLOR, null, null, null, Font.PLAIN)
             else -> TextAttributes(null, REVIEWED_BACKGROUND, null, null, Font.PLAIN)
         }
         attributes.errorStripeColor = if (state == MarkState.CHANGED) CHANGED_STRIPE else REVIEWED_STRIPE

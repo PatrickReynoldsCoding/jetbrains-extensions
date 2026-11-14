@@ -47,6 +47,15 @@
                 text="Focus Mode: Fold Reviewed Code"
                 description="Fold reviewed code into a single line so that only code you have not read is on screen."/>
 
+        <action id="ReviewMarks.ReviewOnlyBranchChanges"
+                class="com.patrickreynolds.reviewmarks.ReviewOnlyBranchChangesAction"
+                text="Review Only Branch Changes..."
+                description="Count only the lines changed since a base branch as code to review. Everything else is faded."/>
+        <action id="ReviewMarks.StopReviewingOnlyBranchChanges"
+                class="com.patrickreynolds.reviewmarks.StopReviewingOnlyBranchChangesAction"
+                text="Stop Reviewing Only Branch Changes"
+                description="Count all code again."/>
+
         <group id="ReviewMarks.Menu" text="Review Marks" popup="true">
             <reference ref="ReviewMarks.MarkAndGoToNext"/>
             <reference ref="ReviewMarks.MarkSelectionAsReviewed"/>
@@ -58,6 +67,9 @@
             <separator/>
             <reference ref="ReviewMarks.ToggleFocusMode"/>
             <reference ref="ReviewMarks.ToggleFoldMode"/>
+            <separator/>
+            <reference ref="ReviewMarks.ReviewOnlyBranchChanges"/>
+            <reference ref="ReviewMarks.StopReviewingOnlyBranchChanges"/>
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </group>
     </actions>

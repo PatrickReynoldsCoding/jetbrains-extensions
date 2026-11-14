@@ -17,6 +17,11 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
 
     private fun reviewMarks() = project.service<ReviewMarksService>()
 
+    override fun setUp() {
+        super.setUp()
+        reviewMarks().loadState(ReviewMarksState())
+    }
+
     private fun openDocumentWithLinesTwoToFourMarked(): Document {
         myFixture.configureByText("Example.txt", documentText)
         val document = myFixture.editor.document
@@ -253,6 +258,59 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
 
         assertTrue(savedState.foldMode)
         assertEquals("line four", savedState.lastStop?.anchorText)
+    }
+
+    fun `test reviewing only branch changes fades everything else and counts only the changed lines`() {
+        val file = myFixture.configureByText("Scoped.txt", documentText).virtualFile
+        val document = myFixture.editor.document
+
+        reviewMarks().startReviewingOnlyChanges("origin/main", mapOf(file.path to listOf(LineRange(2, 3))))
+
+        assertEquals(
+            listOf(TextRange(0, lineThreeStart - 1), TextRange(documentText.indexOf("line five"), documentText.length)),
+            OutOfScopeHighlighters.rangesIn(project, document),
+        )
+        assertEquals(
+            ReviewProgress(reviewedLineCount = 0, codeLineCount = 2, changedLineCount = 0),
+            reviewMarks().progressOf(document),
+        )
+        assertEquals("origin/main", reviewMarks().scopeBaseRef)
+    }
+
+    fun `test reviewing a changed line in scope raises the progress`() {
+        val file = myFixture.configureByText("Scoped.txt", documentText).virtualFile
+        val document = myFixture.editor.document
+        reviewMarks().startReviewingOnlyChanges("origin/main", mapOf(file.path to listOf(LineRange(2, 3))))
+
+        reviewMarks().markRangeAsReviewed(document, TextRange(lineThreeStart, lineThreeEnd))
+
+        assertEquals(
+            ReviewProgress(reviewedLineCount = 1, codeLineCount = 2, changedLineCount = 0),
+            reviewMarks().progressOf(document),
+        )
+    }
+
+    fun `test a file that is not part of the branch changes is entirely out of scope`() {
+        myFixture.configureByText("Other.txt", documentText)
+        val document = myFixture.editor.document
+
+        reviewMarks().startReviewingOnlyChanges("origin/main", emptyMap())
+
+        assertEquals(listOf(TextRange(0, documentText.length)), OutOfScopeHighlighters.rangesIn(project, document))
+        assertEquals("", reviewMarks().progressOf(document).statusText())
+    }
+
+    fun `test stopping the branch review counts every line again and the scope is saved while it is on`() {
+        val file = myFixture.configureByText("Scoped.txt", documentText).virtualFile
+        val document = myFixture.editor.document
+        reviewMarks().startReviewingOnlyChanges("origin/main", mapOf(file.path to listOf(LineRange(2, 3))))
+        assertEquals("origin/main", reviewMarks().state.scope?.baseRef)
+
+        reviewMarks().stopReviewingOnlyChanges()
+
+        assertEquals(emptyList<TextRange>(), OutOfScopeHighlighters.rangesIn(project, document))
+        assertEquals(5, reviewMarks().progressOf(document).codeLineCount)
+        assertNull(reviewMarks().scopeBaseRef)
     }
 
     fun `test marking the declaration around the caret finds nothing in plain text`() {

@@ -20,9 +20,10 @@ fun reviewProgress(
     documentText: String,
     reviewedRanges: List<TextRange>,
     changedRanges: List<TextRange>,
+    outOfScopeRanges: List<TextRange>,
 ): ReviewProgress {
-    val codeLines = codeLinesOf(documentText)
-    val unreviewedLineCount = linesNeedingReview(documentText, reviewedRanges).size
+    val codeLines = codeLinesInScope(documentText, outOfScopeRanges)
+    val unreviewedLineCount = linesNeedingReview(documentText, reviewedRanges, outOfScopeRanges).size
     val changedLineCount = codeLines.count { codeLine ->
         changedRanges.any { it.intersectsStrict(codeLine.codeRange) }
     }
