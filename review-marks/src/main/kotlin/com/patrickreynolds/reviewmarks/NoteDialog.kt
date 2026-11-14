@@ -18,17 +18,20 @@ private const val NOTE_COLUMNS = 50
 
 class NoteDialog(
     project: Project,
-    initialDetails: NoteDetails?,
+    initialDetails: NoteDetails,
+    private val placeText: String,
 ) : DialogWrapper(project) {
 
-    private val textArea = JBTextArea(initialDetails?.text.orEmpty(), NOTE_ROWS, NOTE_COLUMNS)
-    private val floatingCheckBox = JBCheckBox("Show this note above the code", initialDetails?.floating ?: false)
+    private val textArea = JBTextArea(initialDetails.text, NOTE_ROWS, NOTE_COLUMNS)
+    private val floatingCheckBox = JBCheckBox("Show above the code", initialDetails.floating)
     private val kindButtons = NoteKind.entries.associateWith { kind ->
-        JBRadioButton("${kind.label}: ${kind.explanation}", kind == (initialDetails?.kind ?: NoteKind.NOTE))
+        val button = JBRadioButton("${kind.label}: ${kind.explanation}", kind == initialDetails.kind)
+        button.icon = ICON_BY_NOTE_KIND.getValue(kind)
+        button
     }
 
     init {
-        title = "Review Note"
+        title = if (initialDetails.text.isEmpty()) "New ${initialDetails.kind.label}" else "Edit ${initialDetails.kind.label}"
         textArea.lineWrap = true
         textArea.wrapStyleWord = true
         val kindGroup = ButtonGroup()
@@ -38,7 +41,7 @@ class NoteDialog(
 
     override fun createCenterPanel(): JComponent {
         val panel = JPanel(BorderLayout())
-        panel.add(JBLabel("Note for this line. Leave it empty to delete the note."), BorderLayout.NORTH)
+        panel.add(JBLabel("$placeText. Leave it empty to delete it."), BorderLayout.NORTH)
         panel.add(JBScrollPane(textArea), BorderLayout.CENTER)
 
         val options = JPanel()

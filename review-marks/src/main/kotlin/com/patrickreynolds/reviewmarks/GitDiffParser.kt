@@ -34,6 +34,13 @@ fun parseChangedLinesFromPatch(filePatch: String): List<LineRange> {
     return joinConsecutiveLines(addedLineNumbers)
 }
 
+fun parseCommentableLinesFromPatch(path: String, filePatch: String): List<CommentableLines> =
+    filePatch.lineSequence().mapNotNull { HUNK_HEADER.find(it) }.mapNotNull { hunkHeader ->
+        val firstLineNumber = hunkHeader.groupValues[1].toInt()
+        val lineCount = hunkHeader.groupValues[2].ifEmpty { "1" }.toInt()
+        if (lineCount == 0) null else CommentableLines(path, firstLineNumber, firstLineNumber + lineCount - 1)
+    }.toList()
+
 private fun joinConsecutiveLines(lineNumbers: List<Int>): List<LineRange> {
     val ranges = mutableListOf<LineRange>()
     lineNumbers.forEach { lineNumber ->

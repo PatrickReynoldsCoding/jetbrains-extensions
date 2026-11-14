@@ -22,9 +22,9 @@ private val BACKGROUND_BY_STATE = mapOf(
 )
 
 private val STRIPE_BY_STATE = mapOf(
-    MarkState.REVIEWED to JBColor(Color(0x5C, 0xB8, 0x5C), Color(0x4A, 0x8F, 0x4A)),
-    MarkState.TO_REVIEW to JBColor(Color(0x4A, 0x90, 0xE2), Color(0x3B, 0x78, 0xC4)),
-    MarkState.CHANGED to JBColor(Color(0xE0, 0xA0, 0x30), Color(0xC0, 0x88, 0x20)),
+    MarkState.REVIEWED to REVIEWED_ACCENT,
+    MarkState.TO_REVIEW to TO_REVIEW_ACCENT,
+    MarkState.CHANGED to CHANGED_ACCENT,
 )
 
 private val TOOLTIP_BY_STATE = mapOf(

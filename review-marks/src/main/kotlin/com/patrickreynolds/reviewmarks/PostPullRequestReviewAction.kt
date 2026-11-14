@@ -59,8 +59,7 @@ class PostPullRequestReviewAction : AnAction() {
         when (result) {
             is GitHubResult.Failure -> showError(
                 project,
-                "GitHub did not accept the review: ${result.message} (${result.statusCode}). Nothing was posted. " +
-                    "A comment on a line that is not part of the PR's changes is refused.",
+                "GitHub did not accept the review: ${result.message} (${result.statusCode}). Nothing was posted.",
             )
             is GitHubResult.Success -> {
                 reviewMarks.endPullRequestReview()

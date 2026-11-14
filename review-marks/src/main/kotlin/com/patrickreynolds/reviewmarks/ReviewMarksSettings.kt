@@ -6,10 +6,11 @@ import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 
 class ReviewMarksSettingsState {
-    var pauseRemindersOn: Boolean = false
     var workMinutes: Int = 25
     var breakMinutes: Int = 5
     var defaultBaseBranch: String = "main"
+    var notesFloatByDefault: Boolean = true
+    var gitHubHostAliases: String = "github-personal=github.com"
 
     fun pomodoroLengths() = PomodoroLengths(workMinutes, breakMinutes)
 }

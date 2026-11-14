@@ -7,4 +7,5 @@ data class StoredNote(
     var text: String = "",
     var floating: Boolean = false,
     var kind: String = NoteKind.NOTE.name,
+    var id: String = "",
 )

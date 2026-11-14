@@ -3,6 +3,7 @@ package com.patrickreynolds.reviewmarks
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.ValidationInfo
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
@@ -24,6 +25,8 @@ class PostReviewDialog(
     private val session: PullRequestSession,
     private val comments: List<ReviewComment>,
 ) : DialogWrapper(project) {
+
+    private val commentsByPlace = commentsByPlace(comments, session.commentableLines)
 
     private val summaryArea = JBTextArea(SUMMARY_ROWS, SUMMARY_COLUMNS)
     private val commentRadioButton = JRadioButton("Comment", true)
@@ -57,10 +60,18 @@ class PostReviewDialog(
         middle.add(reviewTypeRow, BorderLayout.SOUTH)
         panel.add(middle, BorderLayout.CENTER)
 
-        val commentList = JBList(comments.map { "${it.path}:${it.line} — ${it.body.lineSequence().first().take(COMMENT_PREVIEW_LENGTH)}" })
+        val commentList = JBList(comments.map { "${it.path}:${linesOf(it)} — ${it.body.lineSequence().first().take(COMMENT_PREVIEW_LENGTH)}" })
         commentList.emptyText.text = "No comments. Add a note to a line to include it."
         val commentsPanel = JPanel(BorderLayout())
-        commentsPanel.add(JBLabel("${comments.size} comments from your notes:"), BorderLayout.NORTH)
+        commentsPanel.add(JBLabel("${comments.size} PR comments:"), BorderLayout.NORTH)
+        if (commentsByPlace.outsideDiff.isNotEmpty()) {
+            val warning = JBLabel(
+                "<html><b>${commentsByPlace.outsideDiff.size} of them are on lines outside this PR's changes.</b> " +
+                    "GitHub refuses those as line comments, so they are added to the end of the summary instead.</html>",
+            )
+            warning.foreground = JBColor.namedColor("Label.warningForeground", JBColor(0x9A6700, 0xE0B341))
+            commentsPanel.add(warning, BorderLayout.SOUTH)
+        }
         commentsPanel.add(JBScrollPane(commentList), BorderLayout.CENTER)
         commentsPanel.preferredSize = JBUI.size(500, 140)
         panel.add(commentsPanel, BorderLayout.SOUTH)
@@ -79,9 +90,9 @@ class PostReviewDialog(
 
     fun submission() = ReviewSubmission(
         commitSha = session.headSha,
-        summary = summaryArea.text.trim(),
+        summary = summaryWithCommentsOutsideDiff(summaryArea.text.trim(), commentsByPlace.outsideDiff),
         event = selectedEvent(),
-        comments = comments,
+        comments = commentsByPlace.insideDiff,
     )
 
     private fun selectedEvent(): ReviewEvent = when {
@@ -90,3 +101,6 @@ class PostReviewDialog(
         else -> ReviewEvent.COMMENT
     }
 }
+
+private fun linesOf(comment: ReviewComment): String =
+    if (comment.firstLine == comment.lastLine) "${comment.firstLine}" else "${comment.firstLine}-${comment.lastLine}"

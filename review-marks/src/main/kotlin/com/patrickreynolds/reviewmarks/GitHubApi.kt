@@ -25,7 +25,12 @@ enum class ReviewEvent {
     REQUEST_CHANGES,
 }
 
-data class ReviewComment(val path: String, val line: Int, val body: String)
+data class PullRequestChanges(
+    val changedLinesByPath: Map<String, List<LineRange>>,
+    val commentableLines: List<CommentableLines>,
+)
+
+data class ReviewComment(val path: String, val firstLine: Int, val lastLine: Int, val body: String)
 
 data class ReviewSubmission(
     val commitSha: String,
@@ -64,8 +69,9 @@ class GitHubApi(private val apiUrl: String, private val token: String) {
             is GitHubResult.Success -> GitHubResult.Success(pullRequestOf(response.value.asJsonObject))
         }
 
-    fun changedLines(owner: String, repository: String, number: Int): GitHubResult<Map<String, List<LineRange>>> {
+    fun changedLines(owner: String, repository: String, number: Int): GitHubResult<PullRequestChanges> {
         val changedLinesByPath = mutableMapOf<String, List<LineRange>>()
+        val commentableLines = mutableListOf<CommentableLines>()
         for (page in 1..MOST_FILE_PAGES) {
             val response = get("/repos/$owner/$repository/pulls/$number/files?per_page=$FILES_PER_PAGE&page=$page")
             val files = when (response) {
@@ -75,11 +81,15 @@ class GitHubApi(private val apiUrl: String, private val token: String) {
             files.forEach { file ->
                 val fileObject = file.asJsonObject
                 val patch = fileObject.get("patch")?.asString
-                if (patch != null) changedLinesByPath[fileObject.get("filename").asString] = parseChangedLinesFromPatch(patch)
+                val path = fileObject.get("filename").asString
+                if (patch != null) {
+                    changedLinesByPath[path] = parseChangedLinesFromPatch(patch)
+                    commentableLines += parseCommentableLinesFromPatch(path, patch)
+                }
             }
             if (files.size() < FILES_PER_PAGE) break
         }
-        return GitHubResult.Success(changedLinesByPath)
+        return GitHubResult.Success(PullRequestChanges(changedLinesByPath, commentableLines))
     }
 
     fun postReview(owner: String, repository: String, number: Int, review: ReviewSubmission): GitHubResult<String> =
@@ -93,7 +103,11 @@ class GitHubApi(private val apiUrl: String, private val token: String) {
         review.comments.forEach { comment ->
             val commentObject = JsonObject()
             commentObject.addProperty("path", comment.path)
-            commentObject.addProperty("line", comment.line)
+            if (comment.firstLine < comment.lastLine) {
+                commentObject.addProperty("start_line", comment.firstLine)
+                commentObject.addProperty("start_side", "RIGHT")
+            }
+            commentObject.addProperty("line", comment.lastLine)
             commentObject.addProperty("side", "RIGHT")
             commentObject.addProperty("body", comment.body)
             comments.add(commentObject)

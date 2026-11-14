@@ -1,5 +1,7 @@
 package com.patrickreynolds.reviewmarks
 
+import kotlin.math.abs
+
 fun locateMarkedText(
     documentText: String,
     markedText: String,
@@ -7,9 +9,10 @@ fun locateMarkedText(
 ): Int? {
     if (markedText.isEmpty()) return null
     if (documentText.startsWith(markedText, storedStartOffset)) return storedStartOffset
-
-    val firstOccurrence = documentText.indexOf(markedText)
-    if (firstOccurrence < 0) return null
-    val markedTextOccursAgain = documentText.indexOf(markedText, firstOccurrence + 1) >= 0
-    return if (markedTextOccursAgain) null else firstOccurrence
+    return occurrencesOf(markedText, documentText).minByOrNull { occurrence -> abs(occurrence - storedStartOffset) }
 }
+
+private fun occurrencesOf(markedText: String, documentText: String): List<Int> =
+    generateSequence(documentText.indexOf(markedText).takeIf { it >= 0 }) { previousOccurrence ->
+        documentText.indexOf(markedText, previousOccurrence + 1).takeIf { it >= 0 }
+    }.toList()

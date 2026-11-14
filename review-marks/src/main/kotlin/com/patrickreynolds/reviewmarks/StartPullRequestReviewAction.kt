@@ -29,7 +29,8 @@ class StartPullRequestReviewAction : AnAction() {
         }
         val remote = parseGitRemote(repository.remoteUrl)
             ?: return showError(project, "Could not read a GitHub owner and repository from the remote ${repository.remoteUrl}")
-        val credentials = when (val result = IdeGitHubAccount.credentialsFor(project, remote.host)) {
+        val gitHubHost = gitHubHostFor(remote.host, service<ReviewMarksSettings>().state.gitHubHostAliases)
+        val credentials = when (val result = IdeGitHubAccount.credentialsFor(project, gitHubHost)) {
             is GitHubCredentialsResult.Found -> result
             is GitHubCredentialsResult.NoToken -> return showError(project, "No GitHub token. Sign in under Settings, Version Control, GitHub.")
             is GitHubCredentialsResult.NoMatchingAccount -> return showError(project, noAccountMessage(result))
@@ -39,18 +40,20 @@ class StartPullRequestReviewAction : AnAction() {
         val pullRequest = findPullRequest(project, api, remote, repository.currentBranch) ?: return
         if (pullRequest.headSha != repository.headSha && !confirmCheckoutDiffers(project, pullRequest)) return
 
-        val changedLinesByRepositoryPath = loadChangedLines(project, api, remote, pullRequest) ?: return
+        val pullRequestChanges = loadChangedLines(project, api, remote, pullRequest) ?: return
+        val changedLinesByRepositoryPath = pullRequestChanges.changedLinesByPath
         val session = PullRequestSession(
             number = pullRequest.number,
             title = pullRequest.title,
             htmlUrl = pullRequest.htmlUrl,
-            host = remote.host,
+            host = gitHubHost,
             apiUrl = credentials.apiUrl,
             owner = remote.owner,
             repository = remote.repository,
             headSha = pullRequest.headSha,
             repositoryRoot = repository.root,
             accountName = credentials.accountName,
+            commentableLines = pullRequestChanges.commentableLines.toMutableList(),
         )
         val changedLinesByPath = changedLinesByRepositoryPath.mapKeys { (relativePath, _) -> "${repository.root}/$relativePath" }
         val markedFileCount = project.service<ReviewMarksService>().startPullRequestReview(session, localFilesByPath(changedLinesByPath))
@@ -115,7 +118,8 @@ class StartPullRequestReviewAction : AnAction() {
     private fun noAccountMessage(result: GitHubCredentialsResult.NoMatchingAccount): String {
         val signedIn = result.signedInHosts.ifEmpty { listOf("none") }.joinToString()
         return "No GitHub account in the IDE for ${result.remoteHost} (signed in: $signedIn). " +
-            "Add the account under Settings, Version Control, GitHub."
+            "Add the account under Settings, Version Control, GitHub. " +
+            "If your remote uses an SSH host alias, add it under Settings, Tools, Review Marks, GitHub host aliases."
     }
 
     private fun showError(project: Project, message: String) {

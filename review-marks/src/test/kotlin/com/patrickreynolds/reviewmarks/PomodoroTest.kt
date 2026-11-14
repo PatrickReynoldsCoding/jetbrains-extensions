@@ -2,6 +2,7 @@ package com.patrickreynolds.reviewmarks
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PomodoroTest {
@@ -10,73 +11,116 @@ class PomodoroTest {
     private val lengths = PomodoroLengths(workMinutes = 25, breakMinutes = 5)
 
     @Test
-    fun `turning reminders on starts a work period with no message`() {
-        val step = stepPomodoro(null, nowMillis = 10 * minute, remindersOn = true, lengths = lengths)
-
-        assertEquals(PomodoroState(PomodoroPhase.WORKING, 10 * minute), step.stateAfterStep)
-        assertNull(step.message)
+    fun `starting begins a review period`() {
+        assertEquals(PomodoroState.Running(PomodoroPhase.WORKING, 10 * minute), startedPomodoro(10 * minute))
     }
 
     @Test
-    fun `turning reminders off forgets the period`() {
-        val working = PomodoroState(PomodoroPhase.WORKING, 0)
-
-        val step = stepPomodoro(working, nowMillis = 3 * minute, remindersOn = false, lengths = lengths)
+    fun `does nothing before it is started`() {
+        val step = stepPomodoro(null, nowMillis = 99 * minute, lengths = lengths)
 
         assertNull(step.stateAfterStep)
         assertNull(step.message)
     }
 
     @Test
-    fun `keeps working with no message before the work minutes are up`() {
-        val working = PomodoroState(PomodoroPhase.WORKING, 0)
+    fun `keeps reviewing with no message before the review minutes are up`() {
+        val reviewing = PomodoroState.Running(PomodoroPhase.WORKING, 0)
 
-        val step = stepPomodoro(working, nowMillis = 24 * minute, remindersOn = true, lengths = lengths)
+        val step = stepPomodoro(reviewing, nowMillis = 24 * minute, lengths = lengths)
 
-        assertEquals(working, step.stateAfterStep)
+        assertEquals(reviewing, step.stateAfterStep)
         assertNull(step.message)
     }
 
     @Test
-    fun `starts the break when the work minutes are up and says how long it is`() {
-        val working = PomodoroState(PomodoroPhase.WORKING, 0)
+    fun `starts the break when the review minutes are up and says how long it is`() {
+        val reviewing = PomodoroState.Running(PomodoroPhase.WORKING, 0)
 
-        val step = stepPomodoro(working, nowMillis = 25 * minute, remindersOn = true, lengths = lengths)
+        val step = stepPomodoro(reviewing, nowMillis = 25 * minute, lengths = lengths)
 
-        assertEquals(PomodoroState(PomodoroPhase.ON_BREAK, 25 * minute), step.stateAfterStep)
-        assertEquals(true, step.message!!.startsWith("Time for a 5 minute break"))
+        assertEquals(PomodoroState.Running(PomodoroPhase.ON_BREAK, 25 * minute), step.stateAfterStep)
+        assertTrue(step.message!!.startsWith("Time for a 5 minute break"))
     }
 
     @Test
-    fun `stays on the break with no message until the break minutes are up`() {
-        val onBreak = PomodoroState(PomodoroPhase.ON_BREAK, 25 * minute)
+    fun `starts the next review period when the break is over`() {
+        val onBreak = PomodoroState.Running(PomodoroPhase.ON_BREAK, 25 * minute)
 
-        val step = stepPomodoro(onBreak, nowMillis = 29 * minute, remindersOn = true, lengths = lengths)
+        val step = stepPomodoro(onBreak, nowMillis = 30 * minute, lengths = lengths)
 
-        assertEquals(onBreak, step.stateAfterStep)
+        assertEquals(PomodoroState.Running(PomodoroPhase.WORKING, 30 * minute), step.stateAfterStep)
+        assertTrue(step.message!!.startsWith("Break over. A new 25 minute review period"))
+    }
+
+    @Test
+    fun `a paused timer does not move on however long it waits`() {
+        val paused = PomodoroState.Paused(PomodoroPhase.WORKING, millisSpentInPhase = 20 * minute)
+
+        val step = stepPomodoro(paused, nowMillis = 500 * minute, lengths = lengths)
+
+        assertEquals(paused, step.stateAfterStep)
         assertNull(step.message)
     }
 
     @Test
-    fun `starts the next work period when the break is over`() {
-        val onBreak = PomodoroState(PomodoroPhase.ON_BREAK, 25 * minute)
+    fun `pausing and resuming keeps the minutes already spent in the period`() {
+        val reviewing = PomodoroState.Running(PomodoroPhase.WORKING, 0)
 
-        val step = stepPomodoro(onBreak, nowMillis = 30 * minute, remindersOn = true, lengths = lengths)
+        val paused = pausedPomodoro(reviewing, nowMillis = 20 * minute) as PomodoroState.Paused
+        val resumed = resumedPomodoro(paused, nowMillis = 100 * minute)
 
-        assertEquals(PomodoroState(PomodoroPhase.WORKING, 30 * minute), step.stateAfterStep)
-        assertEquals(true, step.message!!.startsWith("Break over. A new 25 minute work period"))
+        assertEquals(PomodoroState.Running(PomodoroPhase.WORKING, 80 * minute), resumed)
+        assertEquals(5L, minutesLeftInPhase(resumed, nowMillis = 100 * minute, lengths = lengths))
     }
 
     @Test
-    fun `counts the minutes left in the current period`() {
-        val working = PomodoroState(PomodoroPhase.WORKING, 0)
+    fun `describes the timer before it starts, while it runs and while it is paused`() {
+        assertEquals("25 min reviewing, 5 min break", pomodoroStatusText(null, 0, lengths))
+        assertEquals(
+            "Reviewing · 10 min left",
+            pomodoroStatusText(PomodoroState.Running(PomodoroPhase.WORKING, 0), 15 * minute, lengths),
+        )
+        assertEquals(
+            "Paused · Break · 3 min left",
+            pomodoroStatusText(PomodoroState.Paused(PomodoroPhase.ON_BREAK, 2 * minute), 99 * minute, lengths),
+        )
+    }
 
-        assertEquals(10L, minutesLeftInPhase(working, nowMillis = 15 * minute, lengths = lengths))
-        assertEquals(0L, minutesLeftInPhase(working, nowMillis = 99 * minute, lengths = lengths))
+    private val freshSession = PomodoroSession(completedReviewPeriods = 0, millisReviewedInEarlierPeriods = 0, reviewedLinesAtStart = 40)
+
+    @Test
+    fun `counts a finished review period and its minutes when the break starts`() {
+        val reviewing = PomodoroState.Running(PomodoroPhase.WORKING, 0)
+        val onBreak = PomodoroState.Running(PomodoroPhase.ON_BREAK, 25 * minute)
+
+        val session = sessionAfterStep(freshSession, reviewing, onBreak, nowMillis = 25 * minute)
+
+        assertEquals(PomodoroSession(1, 25 * minute, 40), session)
     }
 
     @Test
-    fun `describes the lengths`() {
-        assertEquals("25 min work, 5 min break", pomodoroLengthsText(lengths))
+    fun `adds the minutes of the current review period to the earlier ones`() {
+        val session = PomodoroSession(1, 25 * minute, 40)
+
+        assertEquals(35 * minute, millisReviewing(PomodoroState.Running(PomodoroPhase.WORKING, 100 * minute), session, 110 * minute))
+        assertEquals(25 * minute, millisReviewing(PomodoroState.Running(PomodoroPhase.ON_BREAK, 100 * minute), session, 110 * minute))
+        assertEquals(30 * minute, millisReviewing(PomodoroState.Paused(PomodoroPhase.WORKING, 5 * minute), session, 999 * minute))
+    }
+
+    @Test
+    fun `a timer that was running when the IDE closed comes back paused with the time it had used`() {
+        val reviewing = PomodoroState.Running(PomodoroPhase.WORKING, 0)
+
+        assertEquals(PomodoroState.Paused(PomodoroPhase.WORKING, 10 * minute), pausedAfterRestart(reviewing, 10 * minute, lengths))
+        assertEquals(PomodoroState.Paused(PomodoroPhase.WORKING, 25 * minute), pausedAfterRestart(reviewing, 900 * minute, lengths))
+    }
+
+    @Test
+    fun `sums up the session when it is finished`() {
+        assertEquals(
+            "Session finished. You reviewed for 52 minutes (2 full review periods) and marked 140 lines as reviewed. Well done. Rest now.",
+            pomodoroSummaryText(minutesReviewing = 52, completedReviewPeriods = 2, linesReviewed = 140),
+        )
     }
 }

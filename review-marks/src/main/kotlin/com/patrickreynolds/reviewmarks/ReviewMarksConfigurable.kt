@@ -16,23 +16,29 @@ class ReviewMarksConfigurable : BoundConfigurable("Review Marks") {
     override fun createPanel(): DialogPanel {
         val settingsState = service<ReviewMarksSettings>().state
         return panel {
-            group("Pomodoro reminders") {
-                row {
-                    checkBox("Remind me to take breaks while I review")
-                        .bindSelected(settingsState::pauseRemindersOn)
-                        .comment("A message stays in the corner until you close it. Nothing is blocked. Reminders are off until you turn them on. Work and break periods repeat.")
-                }
-                row("Work for this many minutes:") {
+            group("Pomodoro") {
+                row("Review for this many minutes:") {
                     intTextField(1..MOST_WORK_MINUTES).bindIntText(settingsState::workMinutes)
                 }
                 row("Then take a break of this many minutes:") {
                     intTextField(1..MOST_BREAK_MINUTES).bindIntText(settingsState::breakMinutes)
                 }
             }
+            group("Notes and comments") {
+                row {
+                    checkBox("Show new notes and comments above the code")
+                        .bindSelected(settingsState::notesFloatByDefault)
+                        .comment("You can still change it for each note.")
+                }
+            }
             group("Review from git") {
                 row("Branch to compare with:") {
                     textField().bindText(settingsState::defaultBaseBranch)
-                        .comment("Used by the All branch changes button.")
+                        .comment("Used by Mark All Branch Changes to Review.")
+                }
+                row("GitHub host aliases:") {
+                    textField().bindText(settingsState::gitHubHostAliases)
+                        .comment("For SSH host aliases in your remotes, as alias=host, split by commas. For example github-personal=github.com.")
                 }
             }
         }

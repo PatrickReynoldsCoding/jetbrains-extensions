@@ -27,9 +27,10 @@ class LocateMarkedTextTest {
     }
 
     @Test
-    fun `drops the mark when the text moved and now appears twice`() {
-        val documentText = "return total\nfun sum() {\n  return total\n}\n"
-        assertNull(locateMarkedText(documentText, markedText, storedStartOffset = 14))
+    fun `picks the copy nearest to where the text was when the text moved and now appears twice`() {
+        val documentText = "return total\n// moved\nfun sum() {\n  return total\n}\n"
+        assertEquals(36, locateMarkedText(documentText, markedText, storedStartOffset = 30))
+        assertEquals(0, locateMarkedText(documentText, markedText, storedStartOffset = 3))
     }
 
     @Test

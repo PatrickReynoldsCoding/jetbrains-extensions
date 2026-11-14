@@ -2,7 +2,10 @@ package com.patrickreynolds.reviewmarks
 
 import com.intellij.openapi.components.service
 import com.intellij.openapi.util.TextRange
+import com.intellij.openapi.ui.TestDialog
+import com.intellij.openapi.ui.TestDialogManager
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import com.intellij.util.ui.tree.TreeUtil
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.treeStructure.Tree
@@ -10,7 +13,7 @@ import com.intellij.util.ui.UIUtil
 import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.Separator
-import com.intellij.openapi.actionSystem.impl.ActionToolbarImpl
+import java.io.File
 import javax.swing.JButton
 import javax.swing.tree.DefaultMutableTreeNode
 
@@ -39,11 +42,25 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
 
     private fun isVisibleInPanel(button: JButton) = button.isVisible && button.parent.isVisible
 
-    private fun fileNodeCount(tree: Tree) = (tree.model.root as DefaultMutableTreeNode).childCount
+    private fun itemsIn(tree: Tree): List<Any> =
+        (tree.model.root as DefaultMutableTreeNode).depthFirstEnumeration().toList()
+            .mapNotNull { (it as DefaultMutableTreeNode).userObject }
+
+    private fun fileNodeCount(tree: Tree) = itemsIn(tree).filterIsInstance<FileRow>().size
+
+    private fun blocksIn(tree: Tree) = itemsIn(tree).filterIsInstance<BlockOfFile>()
+
+    private fun selectAllBlocks(tree: Tree) {
+        val blockPaths = (tree.model.root as DefaultMutableTreeNode).depthFirstEnumeration().toList()
+            .map { it as DefaultMutableTreeNode }
+            .filter { it.userObject is BlockOfFile }
+            .map { TreeUtil.getPathFromRoot(it) }
+        tree.selectionPaths = blockPaths.toTypedArray()
+    }
 
     fun `test the panel has the four tabs and counts the notes in the notes tab title`() {
         myFixture.configureByText("Example.txt", documentText)
-        reviewMarks().setNoteAt(myFixture.editor.document, 0, NoteDetails("ask Sam", floating = false, kind = NoteKind.PR_COMMENT))
+        reviewMarks().addNote(myFixture.editor.document, TextRange(0, "line one".length), NoteDetails("ask Sam", floating = false, kind = NoteKind.PR_COMMENT))
 
         val panel = ReviewMarksPanel(project, testRootDisposable)
 
@@ -57,10 +74,7 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
         val toReviewTree = UIUtil.findComponentsOfType(panel, Tree::class.java).first()
 
         assertEquals(1, fileNodeCount(toReviewTree))
-        val fileNode = (toReviewTree.model.root as DefaultMutableTreeNode).getChildAt(0) as DefaultMutableTreeNode
-        assertEquals(1, fileNode.childCount)
-        val block = (fileNode.getChildAt(0) as DefaultMutableTreeNode).userObject as BlockOfFile
-        assertEquals(BlockKind.TO_REVIEW, block.row.kind)
+        assertEquals(listOf(BlockKind.TO_REVIEW), blocksIn(toReviewTree).map { it.row.kind })
     }
 
     fun `test the to review tab is empty when nothing is marked even if the file has code`() {
@@ -78,10 +92,9 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
 
         tabs(panel).selectedIndex = 1
 
-        val reviewedTree = UIUtil.findComponentsOfType(panel, Tree::class.java).last()
+        val reviewedTree = UIUtil.findComponentsOfType(panel, Tree::class.java)[1]
         assertEquals(1, fileNodeCount(reviewedTree))
-        val fileNode = (reviewedTree.model.root as DefaultMutableTreeNode).getChildAt(0) as DefaultMutableTreeNode
-        val block = (fileNode.getChildAt(0) as DefaultMutableTreeNode).userObject as BlockOfFile
+        val block = blocksIn(reviewedTree).single()
         assertEquals(2, block.row.firstLine)
         assertEquals(4, block.row.lastLine)
     }
@@ -99,19 +112,75 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
         assertEquals(emptyList<String>(), checkBoxes.map { it.text }.filter { it.contains("Fade") })
     }
 
-    fun `test the pomodoro check box shows the saved reminder setting`() {
-        val pauseSettings = service<ReviewMarksSettings>().state
-        val previouslyOn = pauseSettings.pauseRemindersOn
+    fun `test start reviewing shows until the pomodoro starts, then pause and finish show`() {
+        val panel = openPanelWithLinesTwoToFourToReview()
+        val timer = project.service<PomodoroTimer>()
+        val startButton = buttonsOf(panel).first { it.text == "Start reviewing!" }
+        val pauseButton = buttonsOf(panel).first { it.text == "Pause" }
+        val finishButton = buttonsOf(panel).first { it.text == "Finish" }
         try {
-            pauseSettings.pauseRemindersOn = true
-            val panel = openPanelWithLinesTwoToFourToReview()
+            assertTrue(startButton.isVisible)
+            assertFalse(pauseButton.isVisible || finishButton.isVisible)
 
-            val pauseCheckBox = UIUtil.findComponentsOfType(panel, JBCheckBox::class.java).first { it.text == "Pomodoro breaks" }
+            startButton.doClick()
+            panel.refresh()
+            assertFalse(startButton.isVisible)
+            assertTrue(pauseButton.isVisible && finishButton.isVisible)
 
-            assertTrue(pauseCheckBox.isSelected)
+            pauseButton.doClick()
+            panel.refresh()
+            assertEquals("Resume", pauseButton.text)
+            assertTrue(timer.pomodoroState is PomodoroState.Paused)
+
+            finishButton.doClick()
+            panel.refresh()
+            assertTrue(startButton.isVisible)
+            assertNull(timer.pomodoroState)
         } finally {
-            pauseSettings.pauseRemindersOn = previouslyOn
+            timer.finish(0)
         }
+    }
+
+    fun `test clear selected removes the marks of every selected block after asking`() {
+        myFixture.configureByText("Example.txt", documentText)
+        val document = myFixture.editor.document
+        reviewMarks().markRangeToReview(document, TextRange(0, "line one".length))
+        reviewMarks().markRangeToReview(document, TextRange(lineFourEnd - "line four".length, lineFourEnd))
+        val panel = ReviewMarksPanel(project, testRootDisposable)
+        val toReviewTree = UIUtil.findComponentsOfType(panel, Tree::class.java).first()
+        assertEquals(2, blocksIn(toReviewTree).size)
+
+        selectAllBlocks(toReviewTree)
+        TestDialogManager.setTestDialog(TestDialog.YES)
+        try {
+            buttonsOf(panel).first { it.text == "Clear selected" }.doClick()
+        } finally {
+            TestDialogManager.setTestDialog(TestDialog.DEFAULT)
+        }
+        panel.refresh()
+
+        assertEquals(emptyList<BlockOfFile>(), blocksIn(toReviewTree))
+    }
+
+    fun `test the notes tab groups the notes under a header for each kind`() {
+        myFixture.configureByText("Example.txt", documentText)
+        val document = myFixture.editor.document
+        listOf(
+            NoteDetails("ask Sam", floating = false, kind = NoteKind.NOTE),
+            NoteDetails("Why retry?", floating = false, kind = NoteKind.PR_COMMENT),
+            NoteDetails("Rename this", floating = true, kind = NoteKind.AGENT_NOTE),
+            NoteDetails("Add a test", floating = true, kind = NoteKind.AGENT_NOTE),
+        ).forEach { details -> reviewMarks().addNote(document, reviewMarks().noteRangeFor(document, 0, 0)!!, details) }
+        val panel = ReviewMarksPanel(project, testRootDisposable)
+
+        tabs(panel).selectedIndex = 2
+
+        val notesTree = UIUtil.findComponentsOfType(panel, Tree::class.java)[2]
+        val headers = itemsIn(notesTree).filterIsInstance<NoteKindHeader>()
+        assertEquals(
+            listOf(NoteKindHeader(NoteKind.NOTE, 1), NoteKindHeader(NoteKind.PR_COMMENT, 1), NoteKindHeader(NoteKind.AGENT_NOTE, 2)),
+            headers.sortedBy { it.kind },
+        )
     }
 
     fun `test the post review and end PR buttons only show while a pull request is being reviewed`() {
@@ -133,23 +202,26 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
         assertFalse(isVisibleInPanel(postReviewButton))
     }
 
-    fun `test the toolbar has the daily actions and the review from git menu with its four actions`() {
-        val toolbarActionIds = flattenedActionIds(ActionManager.getInstance().getAction("ReviewMarks.Toolbar") as ActionGroup)
+    fun `test the panel has a labelled button for each daily action and each kind of comment`() {
+        val panel = openPanelWithLinesTwoToFourToReview()
+        val buttonLabels = buttonsOf(panel).map { it.text }
 
-        assertEquals(
-            listOf(
-                "ReviewMarks.MarkAsToReview",
-                "ReviewMarks.MarkSelectionAsReviewed",
-                "ReviewMarks.MarkAndGoToNext",
-                "ReviewMarks.ClearReviewedMark",
-                "ReviewMarks.GoToNextRunToReview",
-                "ReviewMarks.GoBackToLastStop",
-                "ReviewMarks.AddOrEditNote",
-                "ReviewMarks.FromGitMenu",
+        assertTrue(
+            buttonLabels.containsAll(
+                listOf(
+                    "To review", "Reviewed", "Reviewed & next", "Clear mark",
+                    "Next to review", "Where I stopped",
+                    "Note", "PR comment", "Agent note",
+                    "Review from git ▾",
+                ),
             ),
-            toolbarActionIds,
         )
-        val fromGitActionIds = flattenedActionIds(ActionManager.getInstance().getAction("ReviewMarks.FromGitMenu") as ActionGroup)
+    }
+
+    fun `test the review from git menu has its four actions`() {
+        val fromGitMenu = ActionManager.getInstance().getAction("ReviewMarks.FromGitMenu") as ActionGroup
+        val actionIds = fromGitMenu.getChildren(null).filter { it !is Separator }.map { ActionManager.getInstance().getId(it)!! }
+
         assertEquals(
             listOf(
                 "ReviewMarks.MarkBranchChanges",
@@ -157,24 +229,32 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
                 "ReviewMarks.ReviewBranchChanges",
                 "ReviewMarks.StartPullRequestReview",
             ),
-            fromGitActionIds,
+            actionIds,
         )
     }
 
-    fun `test every toolbar action has an icon because the toolbar shows icons only`() {
-        val toolbar = ActionManager.getInstance().getAction("ReviewMarks.Toolbar") as ActionGroup
-        val actionsWithoutIcon = flattenedActionIds(toolbar)
-            .filter { ActionManager.getInstance().getAction(it).templatePresentation.icon == null }
+    fun `test the notes tab shows each note's lines and Claude's reply, and clears the agent notes Claude resolved`() {
+        myFixture.configureByText("Example.txt", documentText)
+        val document = myFixture.editor.document
+        val linesTwoToFour = reviewMarks().noteRangeFor(document, lineTwoStart, lineFourEnd)!!
+        reviewMarks().addNote(document, linesTwoToFour, NoteDetails("Rename this", floating = false, kind = NoteKind.AGENT_NOTE))
+        val noteId = reviewMarks().allNotes().single().id
+        val repliesFile = File(project.basePath!!, AGENT_REPLIES_FILE_PATH)
+        repliesFile.parentFile.mkdirs()
+        repliesFile.writeText("""[{"noteId": "$noteId", "reply": "Renamed it to retryCount.", "resolved": true}]""")
+        try {
+            val panel = ReviewMarksPanel(project, testRootDisposable)
+            tabs(panel).selectedIndex = 2
+            val notesTree = UIUtil.findComponentsOfType(panel, Tree::class.java)[2]
 
-        assertEquals(emptyList<String>(), actionsWithoutIcon)
+            assertEquals("2-4", itemsIn(notesTree).filterIsInstance<NoteRow>().single().linesText)
+            assertEquals("Renamed it to retryCount.", itemsIn(notesTree).filterIsInstance<AgentReplyRow>().single().agentReply.reply)
+
+            buttonsOf(panel).first { it.text == "Clear resolved agent notes (1)" }.doClick()
+
+            assertEquals(emptyList<StoredNote>(), reviewMarks().allNotes())
+        } finally {
+            repliesFile.delete()
+        }
     }
-
-    fun `test the panel shows the toolbar`() {
-        val panel = openPanelWithLinesTwoToFourToReview()
-
-        assertTrue(UIUtil.findComponentsOfType(panel, ActionToolbarImpl::class.java).isNotEmpty())
-    }
-
-    private fun flattenedActionIds(group: ActionGroup): List<String> =
-        group.getChildren(null).filter { it !is Separator }.map { ActionManager.getInstance().getId(it)!! }
 }

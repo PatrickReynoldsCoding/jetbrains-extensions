@@ -86,10 +86,12 @@ class GitHubApiTest {
 
         val result = api().changedLines("acme", "widgets", 7) as GitHubResult.Success
 
-        assertEquals(101, result.value.size)
-        assertEquals(listOf(LineRange(0, 0)), result.value.getValue("f1.kt"))
-        assertEquals(listOf(LineRange(1, 1)), result.value.getValue("last.kt"))
-        assertTrue(!result.value.containsKey("image.png"))
+        val changedLinesByPath = result.value.changedLinesByPath
+        assertEquals(101, changedLinesByPath.size)
+        assertEquals(listOf(LineRange(0, 0)), changedLinesByPath.getValue("f1.kt"))
+        assertEquals(listOf(LineRange(1, 1)), changedLinesByPath.getValue("last.kt"))
+        assertTrue(!changedLinesByPath.containsKey("image.png"))
+        assertEquals(CommentableLines("last.kt", 1, 3), result.value.commentableLines.last())
     }
 
     @Test
@@ -100,7 +102,7 @@ class GitHubApiTest {
             commitSha = "abc123",
             summary = "Looks good overall",
             event = ReviewEvent.REQUEST_CHANGES,
-            comments = listOf(ReviewComment("src/A.kt", 12, "Why retry here?")),
+            comments = listOf(ReviewComment("src/A.kt", 12, 12, "Why retry here?")),
         )
 
         val result = api().postReview("acme", "widgets", 7, review)
@@ -117,6 +119,27 @@ class GitHubApiTest {
         assertEquals(12, sentComment.get("line").asInt)
         assertEquals("RIGHT", sentComment.get("side").asString)
         assertEquals("Why retry here?", sentComment.get("body").asString)
+        assertEquals(false, sentComment.has("start_line"))
+    }
+
+    @Test
+    fun `posts a comment on several lines with its first line as the start line`() {
+        responsesByPathAndQuery["/repos/acme/widgets/pulls/7/reviews"] =
+            FakeResponse(200, """{"id": 1, "html_url": "https://github.com/acme/widgets/pull/7#pullrequestreview-1"}""")
+        val review = ReviewSubmission(
+            commitSha = "abc123",
+            summary = "",
+            event = ReviewEvent.COMMENT,
+            comments = listOf(ReviewComment("src/A.kt", 10, 14, "Split this method?")),
+        )
+
+        api().postReview("acme", "widgets", 7, review)
+
+        val sentComment = JsonParser.parseString(recordedRequests.single().body).asJsonObject
+            .getAsJsonArray("comments").single().asJsonObject
+        assertEquals(10, sentComment.get("start_line").asInt)
+        assertEquals("RIGHT", sentComment.get("start_side").asString)
+        assertEquals(14, sentComment.get("line").asInt)
     }
 
     @Test

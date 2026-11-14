@@ -27,11 +27,16 @@ import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.wm.WindowManager
 import com.intellij.util.Alarm
 import com.intellij.util.SingleAlarm
+import java.io.File
 import java.time.LocalDate
 
 private val DOCUMENT_SHOWS_STORED_MARKS = Key.create<Boolean>("reviewmarks.documentShowsStoredMarks")
 
 private const val AFTER_CHANGES_DELAY_MILLISECONDS = 300
+
+private const val MOST_UNDO_STEPS = 20
+
+data class UndoSnapshot(val description: String, val marks: List<StoredMark>, val notes: List<StoredNote>)
 
 @Service(Service.Level.PROJECT)
 @State(name = "ReviewMarks", storages = [Storage(StoragePathMacros.WORKSPACE_FILE)])
@@ -55,6 +60,8 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         private set
 
     private val agentNotesFile = AgentNotesFile(project)
+
+    private val undoSnapshots = ArrayDeque<UndoSnapshot>()
 
     private var lastStop: StoredStop? = null
 
@@ -111,6 +118,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             .filter { offset >= it.range.startOffset && offset <= it.range.endOffset }
 
     fun clearMarksContaining(document: Document, offset: Int) {
+        rememberForUndo("Cleared a mark")
         ReviewedMarkHighlighters.remove(project, document, marksContaining(document, offset))
         afterChangesUpdate.request()
     }
@@ -122,6 +130,19 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             reviewedRanges = rangesWithState(marks, MarkState.REVIEWED),
             toReviewRanges = rangesWithState(marks, MarkState.TO_REVIEW),
             changedRanges = rangesWithState(marks, MarkState.CHANGED),
+        )
+    }
+
+    fun progressOfAllMarkedCode(): ReviewProgress {
+        storeOpenDocuments()
+        val progressOfEachFile = storedMarksByFileUrl.keys.mapNotNull { fileUrl ->
+            val fileRanges = rangesOfFile(fileUrl) ?: return@mapNotNull null
+            reviewProgress(fileRanges.documentText, fileRanges.reviewed, fileRanges.toReview, fileRanges.changed)
+        }
+        return ReviewProgress(
+            reviewedLineCount = progressOfEachFile.sumOf { it.reviewedLineCount },
+            markedLineCount = progressOfEachFile.sumOf { it.markedLineCount },
+            changedLineCount = progressOfEachFile.sumOf { it.changedLineCount },
         )
     }
 
@@ -182,7 +203,45 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         OpenFileDescriptor(project, file, offset).navigate(true)
     }
 
-    fun clearMarkedBlock(fileUrl: String, blockRange: TextRange) {
+    fun clearMarkedBlocks(blocks: List<Pair<String, TextRange>>) {
+        if (blocks.isEmpty()) return
+        rememberForUndo(if (blocks.size == 1) "Cleared a block" else "Cleared ${blocks.size} blocks")
+        blocks.forEach { (fileUrl, blockRange) -> clearMarkedBlock(fileUrl, blockRange) }
+    }
+
+    val undoDescription: String? get() = undoSnapshots.lastOrNull()?.description
+
+    fun undoLastClear() {
+        val snapshot = undoSnapshots.removeLastOrNull() ?: return
+        storedMarksByFileUrl.clear()
+        storedMarksByFileUrl.putAll(snapshot.marks.groupBy { it.fileUrl })
+        storedNotesByFileUrl.clear()
+        storedNotesByFileUrl.putAll(snapshot.notes.groupBy { it.fileUrl })
+        FileEditorManager.getInstance(project).openFiles.forEach { openFile ->
+            val openDocument = FileDocumentManager.getInstance().getCachedDocument(openFile) ?: return@forEach
+            ReviewedMarkHighlighters.remove(project, openDocument, ReviewedMarkHighlighters.inDocument(project, openDocument))
+            ReviewNoteHighlighters.inDocument(project, openDocument).forEach { ReviewNoteHighlighters.remove(project, openDocument, it) }
+            openDocument.putUserData(DOCUMENT_SHOWS_STORED_MARKS, false)
+            showStoredMarks(openDocument, openFile)
+        }
+        refreshNoteInlays()
+        afterChangesUpdate.request()
+        announceReviewStateChanged()
+    }
+
+    private fun rememberForUndo(description: String) {
+        storeOpenDocuments()
+        undoSnapshots.addLast(
+            UndoSnapshot(
+                description = description,
+                marks = storedMarksByFileUrl.values.flatten().map { it.copy() },
+                notes = storedNotesByFileUrl.values.flatten().map { it.copy() },
+            ),
+        )
+        if (undoSnapshots.size > MOST_UNDO_STEPS) undoSnapshots.removeFirst()
+    }
+
+    private fun clearMarkedBlock(fileUrl: String, blockRange: TextRange) {
         storeOpenDocuments()
         val file = VirtualFileManager.getInstance().findFileByUrl(fileUrl)
         val openDocument = file?.let { FileDocumentManager.getInstance().getCachedDocument(it) }
@@ -202,6 +261,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
     }
 
     fun clearAllMarks() {
+        rememberForUndo("Cleared all marks")
         FileEditorManager.getInstance(project).openFiles.forEach { openFile ->
             val openDocument = FileDocumentManager.getInstance().getCachedDocument(openFile) ?: return@forEach
             ReviewedMarkHighlighters.remove(project, openDocument, ReviewedMarkHighlighters.inDocument(project, openDocument))
@@ -216,35 +276,64 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         document.putUserData(DOCUMENT_SHOWS_STORED_MARKS, true)
 
         val documentText = document.text
+        var removedMarkCount = 0
         storedMarksByFileUrl[file.url].orEmpty().forEach { storedMark ->
             val startOffset = locateMarkedText(documentText, storedMark.markedText, storedMark.startOffset)
             if (startOffset != null) {
                 val range = TextRange(startOffset, startOffset + storedMark.markedText.length)
                 ReviewedMarkHighlighters.add(project, document, range, MarkState.valueOf(storedMark.state))
+            } else {
+                removedMarkCount++
             }
         }
-        showStoredNotes(document, file)
+        val movedNoteCount = showStoredNotes(document, file)
         storeMarksOf(document, file)
+        unplacedText(file.name, removedMarkCount, movedNoteCount)?.let { showReviewMarksMessage(project, it) }
         showFloatingNotesOf(document)
         afterChangesUpdate.request()
     }
 
-    fun canAddNoteAt(document: Document, offset: Int): Boolean = codeRangeOfLineAt(document, offset) != null
+    fun noteRangeFor(document: Document, selectionStart: Int, selectionEnd: Int): TextRange? {
+        val firstLine = document.getLineNumber(selectionStart)
+        val lastLine = document.getLineNumber(maxOf(selectionStart, if (selectionEnd > selectionStart) selectionEnd - 1 else selectionEnd))
+        val linesRange = TextRange(document.getLineStartOffset(firstLine), document.getLineEndOffset(lastLine))
+        return trimmedToCode(document.text, linesRange)
+    }
 
-    fun noteDetailsAt(document: Document, offset: Int): NoteDetails? = noteOnLineAt(document, offset)?.details
-
-    fun setNoteAt(document: Document, offset: Int, details: NoteDetails) {
-        val codeRange = codeRangeOfLineAt(document, offset) ?: return
+    fun addNote(document: Document, noteRange: TextRange, details: NoteDetails) {
         document.putUserData(DOCUMENT_SHOWS_STORED_MARKS, true)
-        val existingNote = noteOnLineAt(document, offset)
-        when {
-            existingNote != null && details.text.isEmpty() -> ReviewNoteHighlighters.remove(project, document, existingNote)
-            existingNote != null -> ReviewNoteHighlighters.changeDetails(existingNote, details)
-            details.text.isNotEmpty() -> ReviewNoteHighlighters.add(project, document, codeRange, details)
+        ReviewNoteHighlighters.add(project, document, noteRange, details, newNoteId())
+        refreshNoteInlays()
+        announceReviewStateChanged()
+    }
+
+    fun editNote(document: Document, note: ReviewNote, details: NoteDetails) {
+        if (details.text.isEmpty()) {
+            rememberForUndo("Deleted a ${note.details.kind.label.lowercase()}")
+            ReviewNoteHighlighters.remove(project, document, note)
+        } else {
+            ReviewNoteHighlighters.changeDetails(note, details)
         }
         refreshNoteInlays()
         announceReviewStateChanged()
     }
+
+    fun agentReplies(): Map<String, AgentReply> {
+        val repliesFile = project.basePath?.let { File(it, AGENT_REPLIES_FILE_PATH) } ?: return emptyMap()
+        if (!repliesFile.isFile) return emptyMap()
+        return parseAgentReplies(repliesFile.readText())
+    }
+
+    fun noteLinesText(note: StoredNote): String? {
+        val file = VirtualFileManager.getInstance().findFileByUrl(note.fileUrl) ?: return null
+        val documentText = FileDocumentManager.getInstance().getDocument(file)?.text ?: return null
+        val noteOffset = locateMarkedText(documentText, note.anchorText, note.startOffset) ?: return null
+        val firstLine = lineNumberAt(documentText, noteOffset)
+        val lastLine = lineNumberAt(documentText, noteOffset + note.anchorText.length)
+        return if (firstLine == lastLine) "$firstLine" else "$firstLine-$lastLine"
+    }
+
+    fun notesIn(document: Document): List<ReviewNote> = ReviewNoteHighlighters.inDocument(project, document)
 
     fun allNotes(): List<StoredNote> {
         storeOpenDocuments()
@@ -259,7 +348,13 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         OpenFileDescriptor(project, file, noteOffset).navigate(true)
     }
 
-    fun deleteNote(note: StoredNote) {
+    fun deleteNotes(notes: List<StoredNote>) {
+        if (notes.isEmpty()) return
+        rememberForUndo(if (notes.size == 1) "Deleted a comment" else "Deleted ${notes.size} comments")
+        notes.forEach { deleteNote(it) }
+    }
+
+    private fun deleteNote(note: StoredNote) {
         val file = VirtualFileManager.getInstance().findFileByUrl(note.fileUrl)
         val openDocument = file?.let { FileDocumentManager.getInstance().getCachedDocument(it) }
         val liveNote = openDocument?.let { document ->
@@ -296,7 +391,12 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             val relativePath = relativePathIn(session.repositoryRoot, file.path) ?: return@mapNotNull null
             val documentText = FileDocumentManager.getInstance().getDocument(file)?.text ?: return@mapNotNull null
             val noteOffset = locateMarkedText(documentText, note.anchorText, note.startOffset) ?: note.startOffset
-            ReviewComment(relativePath, lineNumberAt(documentText, noteOffset), note.text)
+            ReviewComment(
+                path = relativePath,
+                firstLine = lineNumberAt(documentText, noteOffset),
+                lastLine = lineNumberAt(documentText, noteOffset + note.anchorText.length),
+                body = note.text,
+            )
         }
     }
 
@@ -340,6 +440,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         lastStop = state.lastStop
         reviewLog = state.reviewLog.toList()
         pullRequest = state.pullRequest
+        undoSnapshots.clear()
     }
 
     override fun dispose() = Unit
@@ -435,11 +536,14 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             val file = VirtualFileManager.getInstance().findFileByUrl(note.fileUrl) ?: return@mapNotNull null
             val documentText = FileDocumentManager.getInstance().getDocument(file)?.text ?: return@mapNotNull null
             val noteOffset = locateMarkedText(documentText, note.anchorText, note.startOffset) ?: note.startOffset
-            val lineNumber = lineNumberAt(documentText, noteOffset)
+            val firstLine = lineNumberAt(documentText, noteOffset)
+            val lastLine = lineNumberAt(documentText, noteOffset + note.anchorText.length)
             AgentNoteEntry(
+                noteId = note.id,
                 relativePath = project.basePath?.let { relativePathIn(it, file.path) } ?: file.path,
-                lineNumber = lineNumber,
-                codeLine = documentText.lines().getOrElse(lineNumber - 1) { "" }.trim(),
+                firstLine = firstLine,
+                lastLine = lastLine,
+                code = documentText.lines().subList(firstLine - 1, lastLine).joinToString("\n"),
                 noteText = note.text,
             )
         }
@@ -507,15 +611,31 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         )
     }
 
-    private fun showStoredNotes(document: Document, file: VirtualFile) {
+    private fun showStoredNotes(document: Document, file: VirtualFile): Int {
         val documentText = document.text
+        var movedNoteCount = 0
         storedNotesByFileUrl[file.url].orEmpty().forEach { storedNote ->
             val startOffset = locateMarkedText(documentText, storedNote.anchorText, storedNote.startOffset)
-            if (startOffset != null) {
-                val codeRange = TextRange(startOffset, startOffset + storedNote.anchorText.length)
-                val details = NoteDetails(storedNote.text, storedNote.floating, noteKindNamed(storedNote.kind))
-                ReviewNoteHighlighters.add(project, document, codeRange, details)
+            val codeRange = if (startOffset != null) {
+                TextRange(startOffset, startOffset + storedNote.anchorText.length)
+            } else {
+                movedNoteCount++
+                nearestCodeLineRange(document, storedNote.startOffset)
             }
+            if (codeRange != null) {
+                val details = NoteDetails(storedNote.text, storedNote.floating, noteKindNamed(storedNote.kind))
+                ReviewNoteHighlighters.add(project, document, codeRange, details, storedNote.id.ifEmpty { newNoteId() })
+            }
+        }
+        return movedNoteCount
+    }
+
+    private fun nearestCodeLineRange(document: Document, oldOffset: Int): TextRange? {
+        if (document.lineCount == 0) return null
+        val oldLine = document.getLineNumber(oldOffset.coerceIn(0, document.textLength))
+        val linesByDistance = (0 until document.lineCount).sortedBy { lineNumber -> kotlin.math.abs(lineNumber - oldLine) }
+        return linesByDistance.firstNotNullOfOrNull { lineNumber ->
+            noteRangeFor(document, document.getLineStartOffset(lineNumber), document.getLineStartOffset(lineNumber))
         }
     }
 
@@ -528,6 +648,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
                 text = note.text,
                 floating = note.details.floating,
                 kind = note.details.kind.name,
+                id = note.id,
             )
         }
         if (notesInDocument.isEmpty()) {
@@ -537,19 +658,4 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         }
     }
 
-    private fun noteOnLineAt(document: Document, offset: Int): ReviewNote? {
-        val lineNumber = document.getLineNumber(offset)
-        return ReviewNoteHighlighters.inDocument(project, document)
-            .firstOrNull { document.getLineNumber(it.range.startOffset) == lineNumber }
-    }
-
-    private fun codeRangeOfLineAt(document: Document, offset: Int): TextRange? {
-        val lineNumber = document.getLineNumber(offset)
-        val lineStartOffset = document.getLineStartOffset(lineNumber)
-        val lineText = document.getText(TextRange(lineStartOffset, document.getLineEndOffset(lineNumber)))
-        val code = lineText.trim()
-        if (code.isEmpty()) return null
-        val codeStartOffset = lineStartOffset + lineText.indexOf(code)
-        return TextRange(codeStartOffset, codeStartOffset + code.length)
-    }
 }
