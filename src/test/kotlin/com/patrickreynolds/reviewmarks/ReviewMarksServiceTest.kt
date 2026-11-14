@@ -3,6 +3,7 @@ package com.patrickreynolds.reviewmarks
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.Document
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.util.TextRange
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 
@@ -209,6 +210,49 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
         val methodStart = javaText.indexOf("    int total")
         val methodEnd = javaText.indexOf("    }\n") + "    }".length
         assertEquals(TextRange(methodStart, methodEnd), range)
+    }
+
+    fun `test fold mode folds reviewed lines into one line and unfolds them when turned off`() {
+        openDocumentWithLinesTwoToFourMarked()
+
+        reviewMarks().changeFoldMode(true)
+
+        val foldedRegions = myFixture.editor.foldingModel.allFoldRegions.filter { !it.isExpanded }
+        assertEquals(1, foldedRegions.size)
+        assertEquals(lineTwoStart, foldedRegions.single().startOffset)
+        assertEquals(lineFourEnd, foldedRegions.single().endOffset)
+        assertEquals("✓ 3 reviewed lines", foldedRegions.single().placeholderText)
+
+        reviewMarks().changeFoldMode(false)
+
+        assertEquals(0, myFixture.editor.foldingModel.allFoldRegions.size)
+    }
+
+    fun `test going back to where I stopped opens the end of the last reviewed line`() {
+        val document = openDocumentWithLinesTwoToFourMarked()
+        myFixture.editor.caretModel.moveToOffset(0)
+
+        val wentBack = reviewMarks().goToLastStop()
+
+        assertTrue(wentBack)
+        val editorAfterGoingBack = FileEditorManager.getInstance(project).selectedTextEditor!!
+        assertEquals(lineFourEnd, editorAfterGoingBack.caretModel.offset)
+        assertEquals(document, editorAfterGoingBack.document)
+    }
+
+    fun `test going back to where I stopped does nothing before anything was reviewed`() {
+        myFixture.configureByText("Fresh.txt", documentText)
+        assertFalse(reviewMarks().goToLastStop())
+    }
+
+    fun `test the last stop and fold mode are saved`() {
+        openDocumentWithLinesTwoToFourMarked()
+        reviewMarks().changeFoldMode(true)
+
+        val savedState = reviewMarks().state
+
+        assertTrue(savedState.foldMode)
+        assertEquals("line four", savedState.lastStop?.anchorText)
     }
 
     fun `test marking the declaration around the caret finds nothing in plain text`() {

@@ -34,13 +34,30 @@
                 text="Focus Mode: Fade Reviewed Code"
                 description="Fade the text of reviewed code so that only code you have not read stands out."/>
 
+        <action id="ReviewMarks.MarkAndGoToNext"
+                class="com.patrickreynolds.reviewmarks.MarkAndGoToNextAction"
+                text="Mark as Reviewed and Go to Next"
+                description="Mark the selection (or the method or class at the caret) as reviewed, then move to the next code to review."/>
+        <action id="ReviewMarks.GoBackToLastStop"
+                class="com.patrickreynolds.reviewmarks.GoBackToLastStopAction"
+                text="Go Back to Where I Stopped"
+                description="Open the place where you last marked code as reviewed."/>
+        <action id="ReviewMarks.ToggleFoldMode"
+                class="com.patrickreynolds.reviewmarks.ToggleFoldModeAction"
+                text="Focus Mode: Fold Reviewed Code"
+                description="Fold reviewed code into a single line so that only code you have not read is on screen."/>
+
         <group id="ReviewMarks.Menu" text="Review Marks" popup="true">
+            <reference ref="ReviewMarks.MarkAndGoToNext"/>
             <reference ref="ReviewMarks.MarkSelectionAsReviewed"/>
             <reference ref="ReviewMarks.MarkEnclosingDeclarationAsReviewed"/>
             <reference ref="ReviewMarks.ClearReviewedMark"/>
             <separator/>
             <reference ref="ReviewMarks.GoToNextRunToReview"/>
+            <reference ref="ReviewMarks.GoBackToLastStop"/>
+            <separator/>
             <reference ref="ReviewMarks.ToggleFocusMode"/>
+            <reference ref="ReviewMarks.ToggleFoldMode"/>
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
         </group>
     </actions>

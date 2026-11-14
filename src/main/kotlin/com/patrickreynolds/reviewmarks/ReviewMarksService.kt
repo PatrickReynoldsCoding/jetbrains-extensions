@@ -16,10 +16,12 @@ import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.wm.WindowManager
 import com.intellij.codeInsight.hint.HintManager
 import com.intellij.util.Alarm
@@ -35,8 +37,8 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
 
     private val storedMarksByFileUrl = mutableMapOf<String, List<StoredMark>>()
 
-    private val progressWidgetUpdate = SingleAlarm(
-        { refreshProgressWidget() },
+    private val afterChangesUpdate = SingleAlarm(
+        { afterChanges() },
         PROGRESS_WIDGET_DELAY_MILLISECONDS,
         this,
         Alarm.ThreadToUse.SWING_THREAD,
@@ -44,6 +46,11 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
 
     var focusMode: Boolean = false
         private set
+
+    var foldMode: Boolean = false
+        private set
+
+    private var lastStop: StoredStop? = null
 
     init {
         EditorFactory.getInstance().eventMulticaster.addDocumentListener(
@@ -53,7 +60,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
                 }
 
                 override fun documentChanged(event: DocumentEvent) {
-                    progressWidgetUpdate.request()
+                    afterChangesUpdate.request()
                 }
             },
             this,
@@ -71,7 +78,8 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
                 }
             }
         ReviewedMarkHighlighters.add(project, document, range, MarkState.REVIEWED, focusMode)
-        progressWidgetUpdate.request()
+        rememberStop(document, range)
+        afterChangesUpdate.request()
     }
 
     fun marksContaining(document: Document, offset: Int): List<ReviewMark> =
@@ -80,7 +88,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
 
     fun clearMarksContaining(document: Document, offset: Int) {
         ReviewedMarkHighlighters.remove(project, document, marksContaining(document, offset))
-        progressWidgetUpdate.request()
+        afterChangesUpdate.request()
     }
 
     fun progressOf(document: Document): ReviewProgress {
@@ -118,6 +126,19 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         }
     }
 
+    fun changeFoldMode(foldModeOn: Boolean) {
+        foldMode = foldModeOn
+        refoldOpenDocuments()
+    }
+
+    fun goToLastStop(): Boolean {
+        val stop = lastStop ?: return false
+        val file = VirtualFileManager.getInstance().findFileByUrl(stop.fileUrl) ?: return false
+        val document = FileDocumentManager.getInstance().getDocument(file) ?: return false
+        OpenFileDescriptor(project, file, stopOffsetIn(document.text, stop)).navigate(true)
+        return true
+    }
+
     fun showStoredMarks(document: Document, file: VirtualFile) {
         if (document.getUserData(DOCUMENT_SHOWS_STORED_MARKS) == true) return
         document.putUserData(DOCUMENT_SHOWS_STORED_MARKS, true)
@@ -132,7 +153,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             }
         }
         storeMarksOf(document, file)
-        progressWidgetUpdate.request()
+        afterChangesUpdate.request()
     }
 
     fun storeMarksOf(document: Document, file: VirtualFile) {
@@ -163,6 +184,8 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         return ReviewMarksState(
             marks = storedMarksByFileUrl.values.flatten().toMutableList(),
             focusMode = focusMode,
+            foldMode = foldMode,
+            lastStop = lastStop,
         )
     }
 
@@ -170,6 +193,8 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         storedMarksByFileUrl.clear()
         storedMarksByFileUrl.putAll(state.marks.groupBy { it.fileUrl })
         focusMode = state.focusMode
+        foldMode = state.foldMode
+        lastStop = state.lastStop
     }
 
     override fun dispose() = Unit
@@ -206,8 +231,38 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         }
     }
 
+    private fun afterChanges() {
+        refreshProgressWidget()
+        refoldOpenDocuments()
+    }
+
     private fun refreshProgressWidget() {
         val statusBar = WindowManager.getInstance().getStatusBar(project) ?: return
         (statusBar.getWidget(ReviewProgressWidget.WIDGET_ID) as? ReviewProgressWidget)?.refresh()
+    }
+
+    private fun refoldOpenDocuments() {
+        FileEditorManager.getInstance(project).openFiles.forEach { openFile ->
+            val openDocument = FileDocumentManager.getInstance().getCachedDocument(openFile) ?: return@forEach
+            val rangesToFold = if (foldMode) {
+                rangesWithState(ReviewedMarkHighlighters.inDocument(project, openDocument), MarkState.REVIEWED)
+            } else {
+                emptyList()
+            }
+            ReviewedFolds.show(project, openDocument, rangesToFold)
+        }
+    }
+
+    private fun rememberStop(document: Document, reviewedRange: TextRange) {
+        val file = FileDocumentManager.getInstance().getFile(document) ?: return
+        val lastReviewedLine = document.getLineNumber(maxOf(reviewedRange.startOffset, reviewedRange.endOffset - 1))
+        val lineStartOffset = document.getLineStartOffset(lastReviewedLine)
+        val lineText = document.getText(TextRange(lineStartOffset, document.getLineEndOffset(lastReviewedLine)))
+        val anchorText = lineText.trim()
+        lastStop = StoredStop(
+            fileUrl = file.url,
+            startOffset = lineStartOffset + lineText.indexOf(anchorText),
+            anchorText = anchorText,
+        )
     }
 }
