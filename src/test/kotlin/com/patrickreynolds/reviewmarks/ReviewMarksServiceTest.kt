@@ -471,6 +471,48 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
         assertEquals(0, shownNotifications.size)
     }
 
+    fun `test the reviewed blocks list each file with its reviewed line range`() {
+        openDocumentWithLinesTwoToFourMarked()
+
+        val reviewedBlocks = reviewMarks().reviewedBlocks()
+
+        val fileBlocks = reviewedBlocks.single()
+        assertEquals("Example.txt", fileBlocks.fileName)
+        assertEquals(listOf(Triple(2, 4, "line two")), fileBlocks.rows.map { Triple(it.firstLine, it.lastLine, it.preview) })
+    }
+
+    fun `test the blocks to review list the changed lines first and then the unread blocks`() {
+        val document = openDocumentWithLinesTwoToFourMarked()
+        edit { document.insertString(lineThreeStart + 5, "X") }
+
+        val fileBlocks = reviewMarks().blocksToReview(myFixture.file.virtualFile.url).single()
+
+        assertEquals(
+            listOf(BlockKind.CHANGED to 3, BlockKind.UNREAD to 1, BlockKind.UNREAD to 5),
+            fileBlocks.rows.map { it.kind to it.firstLine },
+        )
+    }
+
+    fun `test clearing a reviewed block removes the marks inside it`() {
+        val document = openDocumentWithLinesTwoToFourMarked()
+        val row = reviewMarks().reviewedBlocks().single().rows.single()
+
+        reviewMarks().clearReviewedBlock(myFixture.file.virtualFile.url, TextRange(row.startOffset, row.endOffset))
+
+        assertEquals(emptyList<Triple<MarkState, Int, Int>>(), marks(document))
+        assertEquals(emptyList<FileBlocks>(), reviewMarks().reviewedBlocks())
+    }
+
+    fun `test clearing all marks keeps the notes`() {
+        val document = openDocumentWithLinesTwoToFourMarked()
+        reviewMarks().setNoteAt(document, lineThreeStart, "ask Sam")
+
+        reviewMarks().clearAllMarks()
+
+        assertEquals(emptyList<Triple<MarkState, Int, Int>>(), marks(document))
+        assertEquals(listOf("ask Sam"), reviewMarks().allNotes().map { it.text })
+    }
+
     fun `test marking the declaration around the caret finds nothing in plain text`() {
         myFixture.configureByText("Plain.txt", documentText)
         val range = findEnclosingDeclarationRange(myFixture.file, myFixture.editor.document, 3)

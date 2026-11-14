@@ -13,10 +13,10 @@
                                  displayName="Review Marks"
                                  instance="com.patrickreynolds.reviewmarks.ReviewMarksConfigurable"/>
         <notificationGroup id="Review Marks" displayType="BALLOON"/>
-        <toolWindow id="Review Notes"
+        <toolWindow id="Review Marks"
                     anchor="right"
-                    icon="AllIcons.General.Balloon"
-                    factoryClass="com.patrickreynolds.reviewmarks.ReviewNotesToolWindowFactory"/>
+                    icon="AllIcons.Actions.Checked"
+                    factoryClass="com.patrickreynolds.reviewmarks.ReviewMarksToolWindowFactory"/>
         <statusBarWidgetFactory id="ReviewMarks.Progress"
                                 implementation="com.patrickreynolds.reviewmarks.ReviewProgressWidgetFactory"/>
     </extensions>
