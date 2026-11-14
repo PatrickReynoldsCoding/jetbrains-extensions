@@ -1,0 +1,47 @@
+<idea-plugin>
+    <id>com.patrickreynolds.reviewmarks</id>
+    <name>Review Marks</name>
+    <vendor>Patrick Reynolds</vendor>
+    <description>Mark code as reviewed. A line you edit inside reviewed code turns amber until you review it again.</description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <editorFactoryListener implementation="com.patrickreynolds.reviewmarks.ReviewMarksEditorListener"/>
+        <statusBarWidgetFactory id="ReviewMarks.Progress"
+                                implementation="com.patrickreynolds.reviewmarks.ReviewProgressWidgetFactory"/>
+    </extensions>
+
+    <actions>
+        <action id="ReviewMarks.MarkSelectionAsReviewed"
+                class="com.patrickreynolds.reviewmarks.MarkSelectionAsReviewedAction"
+                text="Mark Selection as Reviewed"
+                description="Highlight the selected code as reviewed."/>
+        <action id="ReviewMarks.MarkEnclosingDeclarationAsReviewed"
+                class="com.patrickreynolds.reviewmarks.MarkEnclosingDeclarationAsReviewedAction"
+                text="Mark Method or Class at Caret as Reviewed"
+                description="Mark the innermost multi-line method, class or other named declaration around the caret as reviewed."/>
+        <action id="ReviewMarks.ClearReviewedMark"
+                class="com.patrickreynolds.reviewmarks.ClearReviewedMarkAction"
+                text="Clear Mark at Caret"
+                description="Remove the reviewed or changed mark under the caret."/>
+        <action id="ReviewMarks.GoToNextRunToReview"
+                class="com.patrickreynolds.reviewmarks.GoToNextRunToReviewAction"
+                text="Go to Next Code to Review"
+                description="Move the caret to the next code that is not reviewed or has changed since you reviewed it."/>
+        <action id="ReviewMarks.ToggleFocusMode"
+                class="com.patrickreynolds.reviewmarks.ToggleFocusModeAction"
+                text="Focus Mode: Fade Reviewed Code"
+                description="Fade the text of reviewed code so that only code you have not read stands out."/>
+
+        <group id="ReviewMarks.Menu" text="Review Marks" popup="true">
+            <reference ref="ReviewMarks.MarkSelectionAsReviewed"/>
+            <reference ref="ReviewMarks.MarkEnclosingDeclarationAsReviewed"/>
+            <reference ref="ReviewMarks.ClearReviewedMark"/>
+            <separator/>
+            <reference ref="ReviewMarks.GoToNextRunToReview"/>
+            <reference ref="ReviewMarks.ToggleFocusMode"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </group>
+    </actions>
+</idea-plugin>
