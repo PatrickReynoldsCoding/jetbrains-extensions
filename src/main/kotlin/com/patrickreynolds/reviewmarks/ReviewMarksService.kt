@@ -7,6 +7,7 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.StoragePathMacros
+import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorFactory
@@ -26,6 +27,7 @@ import com.intellij.openapi.wm.WindowManager
 import com.intellij.codeInsight.hint.HintManager
 import com.intellij.util.Alarm
 import com.intellij.util.SingleAlarm
+import java.time.LocalDate
 
 private val DOCUMENT_SHOWS_STORED_MARKS = Key.create<Boolean>("reviewmarks.documentShowsStoredMarks")
 
@@ -56,6 +58,10 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
 
     private var scope: StoredScope? = null
 
+    private var reviewLog: List<ReviewLogEntry> = emptyList()
+
+    private var reviewWindow: ReviewWindow? = null
+
     val scopeBaseRef: String? get() = scope?.baseRef
 
     init {
@@ -74,6 +80,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
     }
 
     fun markRangeAsReviewed(document: Document, range: TextRange) {
+        logNewlyReviewedLines(document, range)
         document.putUserData(DOCUMENT_SHOWS_STORED_MARKS, true)
         ReviewedMarkHighlighters.inDocument(project, document)
             .filter { it.range.intersectsStrict(range) }
@@ -85,8 +92,12 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             }
         ReviewedMarkHighlighters.add(project, document, range, MarkState.REVIEWED, focusMode)
         rememberStop(document, range)
+        remindOfPauseIfDue()
         afterChangesUpdate.request()
     }
+
+    fun reviewSummaryToday(): ReviewSummary =
+        summarizeReview(reviewLog, LocalDate.now().toString(), linesLeftByFile())
 
     fun marksContaining(document: Document, offset: Int): List<ReviewMark> =
         ReviewedMarkHighlighters.inDocument(project, document)
@@ -252,6 +263,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             foldMode = foldMode,
             lastStop = lastStop,
             scope = scope,
+            reviewLog = reviewLog.toMutableList(),
         )
     }
 
@@ -264,6 +276,8 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         foldMode = state.foldMode
         lastStop = state.lastStop
         scope = state.scope
+        reviewLog = state.reviewLog.toList()
+        reviewWindow = null
     }
 
     override fun dispose() = Unit
@@ -304,6 +318,55 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         refreshProgressWidget()
         refoldOpenDocuments()
         announceNotesChanged()
+    }
+
+    private fun logNewlyReviewedLines(document: Document, range: TextRange) {
+        val file = FileDocumentManager.getInstance().getFile(document) ?: return
+        val reviewedRangesBefore = rangesWithState(ReviewedMarkHighlighters.inDocument(project, document), MarkState.REVIEWED)
+        val newLineCount = newlyReviewedLineCount(
+            documentText = document.text,
+            markedRange = range,
+            reviewedRangesBefore = reviewedRangesBefore,
+            outOfScopeRanges = OutOfScopeHighlighters.rangesIn(project, document),
+        )
+        reviewLog = addToReviewLog(reviewLog, LocalDate.now().toString(), file.url, newLineCount)
+    }
+
+    private fun remindOfPauseIfDue() {
+        val pauseSettings = service<ReviewMarksSettings>().state
+        if (!pauseSettings.pauseRemindersOn) {
+            reviewWindow = null
+            return
+        }
+        val pauseCheck = checkForPause(
+            windowBeforeBlock = reviewWindow,
+            nowMillis = System.currentTimeMillis(),
+            minutesBetweenPauses = pauseSettings.minutesBetweenPauses,
+            blocksBetweenPauses = pauseSettings.blocksBetweenPauses,
+        )
+        reviewWindow = pauseCheck.windowAfterBlock
+        pauseCheck.reminder?.let { showPauseReminder(project, it) }
+    }
+
+    private fun linesLeftByFile(): List<FileLinesLeft> {
+        storeOpenDocuments()
+        val scopeFileUrls = scope?.files.orEmpty().map { VirtualFileManager.constructUrl("file", it.path) }
+        val fileUrlsInReview = (storedMarksByFileUrl.keys + storedNotesByFileUrl.keys + scopeFileUrls).distinct()
+        return fileUrlsInReview.mapNotNull { linesLeftIn(it) }.filter { it.lineCount > 0 }
+    }
+
+    private fun linesLeftIn(fileUrl: String): FileLinesLeft? {
+        val file = VirtualFileManager.getInstance().findFileByUrl(fileUrl) ?: return null
+        val documentText = FileDocumentManager.getInstance().getDocument(file)?.text ?: return null
+        val reviewedRanges = storedMarksByFileUrl[fileUrl].orEmpty()
+            .filter { it.state == MarkState.REVIEWED.name }
+            .mapNotNull { storedMark ->
+                locateMarkedText(documentText, storedMark.markedText, storedMark.startOffset)
+                    ?.let { TextRange(it, it + storedMark.markedText.length) }
+            }
+        val changedLines = scope?.files?.firstOrNull { it.path == file.path }?.changedLines.orEmpty()
+        val outOfScopeRanges = if (scope == null) emptyList() else outOfScopeRanges(documentText, changedLines)
+        return FileLinesLeft(fileUrl, linesNeedingReview(documentText, reviewedRanges, outOfScopeRanges).size)
     }
 
     private fun announceNotesChanged() {

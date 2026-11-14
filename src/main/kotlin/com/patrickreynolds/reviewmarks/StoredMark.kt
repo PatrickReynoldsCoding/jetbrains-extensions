@@ -16,4 +16,5 @@ class ReviewMarksState(
     var lastStop: StoredStop? = null,
     var scope: StoredScope? = null,
     var notes: MutableList<StoredNote> = mutableListOf(),
+    var reviewLog: MutableList<ReviewLogEntry> = mutableListOf(),
 )

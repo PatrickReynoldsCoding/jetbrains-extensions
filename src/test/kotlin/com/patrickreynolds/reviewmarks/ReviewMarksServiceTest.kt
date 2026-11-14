@@ -1,5 +1,7 @@
 package com.patrickreynolds.reviewmarks
 
+import com.intellij.notification.Notification
+import com.intellij.notification.Notifications
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.Document
@@ -32,6 +34,19 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
     private fun marks(document: Document) = ReviewedMarkHighlighters.inDocument(project, document)
         .map { Triple(it.state, it.range.startOffset, it.range.endOffset) }
         .sortedBy { it.second }
+
+    private fun collectNotifications(): List<Notification> {
+        val shownNotifications = mutableListOf<Notification>()
+        project.messageBus.connect(testRootDisposable).subscribe(
+            Notifications.TOPIC,
+            object : Notifications {
+                override fun notify(notification: Notification) {
+                    shownNotifications += notification
+                }
+            },
+        )
+        return shownNotifications
+    }
 
     private fun edit(change: () -> Unit) = WriteCommandAction.runWriteCommandAction(project) { change() }
 
@@ -404,6 +419,56 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
 
         assertEquals(emptyList<ReviewNote>(), ReviewNoteHighlighters.inDocument(project, document))
         assertEquals(emptyList<StoredNote>(), reviewMarks().allNotes())
+    }
+
+    fun `test today's summary counts each reviewed line once and lists what is left`() {
+        val document = openDocumentWithLinesTwoToFourMarked()
+        reviewMarks().markRangeAsReviewed(document, TextRange(lineTwoStart, lineThreeEnd))
+
+        val summary = reviewMarks().reviewSummaryToday()
+
+        assertEquals(3, summary.reviewedLineCountToday)
+        assertEquals(1, summary.fileCountReviewedToday)
+        assertEquals(listOf(2), summary.filesWithLinesLeft.map { it.lineCount })
+    }
+
+    fun `test the review log is saved with the state`() {
+        openDocumentWithLinesTwoToFourMarked()
+        assertEquals(listOf(3), reviewMarks().state.reviewLog.map { it.reviewedLineCount })
+    }
+
+    fun `test a pause reminder appears after enough reviewed blocks when reminders are on`() {
+        val pauseSettings = service<ReviewMarksSettings>().state
+        val previousSettings = Triple(pauseSettings.pauseRemindersOn, pauseSettings.minutesBetweenPauses, pauseSettings.blocksBetweenPauses)
+        val shownNotifications = collectNotifications()
+        try {
+            pauseSettings.pauseRemindersOn = true
+            pauseSettings.minutesBetweenPauses = 0
+            pauseSettings.blocksBetweenPauses = 2
+            myFixture.configureByText("Pause.txt", documentText)
+            val document = myFixture.editor.document
+
+            reviewMarks().markRangeAsReviewed(document, TextRange(lineTwoStart, lineThreeEnd))
+            assertEquals(0, shownNotifications.size)
+            reviewMarks().markRangeAsReviewed(document, TextRange(lineThreeStart, lineFourEnd))
+
+            assertEquals(1, shownNotifications.size)
+            assertTrue(shownNotifications.single().content.startsWith("You have reviewed 2 blocks"))
+        } finally {
+            pauseSettings.pauseRemindersOn = previousSettings.first
+            pauseSettings.minutesBetweenPauses = previousSettings.second
+            pauseSettings.blocksBetweenPauses = previousSettings.third
+        }
+    }
+
+    fun `test no pause reminder appears when reminders are off`() {
+        val shownNotifications = collectNotifications()
+        myFixture.configureByText("NoPause.txt", documentText)
+        val document = myFixture.editor.document
+
+        repeat(5) { reviewMarks().markRangeAsReviewed(document, TextRange(lineTwoStart, lineThreeEnd)) }
+
+        assertEquals(0, shownNotifications.size)
     }
 
     fun `test marking the declaration around the caret finds nothing in plain text`() {
