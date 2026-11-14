@@ -33,6 +33,8 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
 
     private fun buttonsOf(panel: ReviewMarksPanel) = UIUtil.findComponentsOfType(panel, JButton::class.java)
 
+    private fun isVisibleInPanel(button: JButton) = button.isVisible && button.parent.isVisible
+
     private fun fileNodeCount(tree: Tree) = (tree.model.root as DefaultMutableTreeNode).childCount
 
     fun `test the panel has the four tabs and counts the notes in the notes tab title`() {
@@ -112,19 +114,19 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
         val file = myFixture.configureByText("Example.txt", documentText).virtualFile
         val panel = ReviewMarksPanel(project, testRootDisposable)
         val postReviewButton = buttonsOf(panel).first { it.text == "Post review…" }
-        assertFalse(postReviewButton.isVisible)
+        assertFalse(isVisibleInPanel(postReviewButton))
 
         reviewMarks().startPullRequestReview(
             PullRequestSession(number = 7, title = "Fix retries", owner = "acme", repository = "widgets", repositoryRoot = "/src", accountName = "octo"),
             mapOf(file to listOf(LineRange(1, 1))),
         )
         panel.refresh()
-        assertTrue(postReviewButton.isVisible)
-        assertTrue(buttonsOf(panel).first { it.text == "End PR" }.isVisible)
+        assertTrue(isVisibleInPanel(postReviewButton))
+        assertTrue(isVisibleInPanel(buttonsOf(panel).first { it.text == "End PR" }))
 
         reviewMarks().endPullRequestReview()
         panel.refresh()
-        assertFalse(postReviewButton.isVisible)
+        assertFalse(isVisibleInPanel(postReviewButton))
     }
 
     fun `test the panel has the branch and pull request buttons`() {
