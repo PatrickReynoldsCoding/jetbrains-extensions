@@ -18,6 +18,14 @@ import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.VirtualFileManager
+import com.intellij.openapi.ui.JBPopupMenu
+import com.intellij.ui.CheckboxTree
+import com.intellij.ui.CheckboxTreeListener
+import com.intellij.ui.CheckedTreeNode
+import com.intellij.util.ui.tree.TreeModelAdapter
+import java.awt.Color
+import javax.swing.JMenuItem
+import javax.swing.event.TreeModelEvent
 import com.intellij.ui.components.ActionLink
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
@@ -58,6 +66,13 @@ private const val TODAY_TAB = 3
 private const val ACTION_PLACE = "ReviewMarksToolWindow"
 private const val FROM_GIT_MENU_ID = "ReviewMarks.FromGitMenu"
 private const val POMODORO_CLOCK_MILLISECONDS = 15_000
+private const val REMOVE_LABEL = "Remove"
+private const val FIRST_TICK_MENU_ITEM = 3
+
+enum class BlockTab(val changeStateLabel: String, val changeStateColor: Color) {
+    TO_REVIEW("Mark reviewed", REVIEWED_ACCENT),
+    REVIEWED("Mark to review", TO_REVIEW_ACCENT),
+}
 
 class ReviewMarksPanel(
     private val project: Project,
@@ -76,8 +91,8 @@ class ReviewMarksPanel(
     private val clearResolvedButton = JButton("Clear resolved agent notes")
     private val progressBar = JProgressBar(0, 100)
     private val tabs = JBTabbedPane()
-    private val toReviewTree = createTree(BlockTreeCellRenderer())
-    private val reviewedTree = createTree(BlockTreeCellRenderer())
+    private val toReviewTree = createBlockTree()
+    private val reviewedTree = createBlockTree()
     private val notesTree = createTree(NoteTreeCellRenderer())
     private val toReviewHeadingLabel = JBLabel()
     private val reviewedHeadingLabel = JBLabel()
@@ -212,8 +227,8 @@ class ReviewMarksPanel(
     }
 
     private fun createTabs(): JBTabbedPane {
-        tabs.addTab("To review", createBlocksTab(toReviewTree, toReviewHeadingLabel, withClearAll = false))
-        tabs.addTab("Reviewed", createBlocksTab(reviewedTree, reviewedHeadingLabel, withClearAll = true))
+        tabs.addTab("To review", createBlocksTab(toReviewTree, toReviewHeadingLabel, BlockTab.TO_REVIEW))
+        tabs.addTab("Reviewed", createBlocksTab(reviewedTree, reviewedHeadingLabel, BlockTab.REVIEWED))
         tabs.addTab("Notes", createNotesTab())
         tabs.addTab("Today", JBScrollPane(todayText))
         todayText.isEditable = false
@@ -226,31 +241,100 @@ class ReviewMarksPanel(
         reviewedTree.emptyText.text = "Nothing marked as reviewed yet."
         listOf(toReviewTree, reviewedTree).forEach { tree ->
             onOpenBlock(tree)
-            onDeleteKey(tree) { clearSelectedBlocks(tree) }
+            onDeleteKey(tree) { removeBlocks(tree) }
         }
         return tabs
     }
 
-    private fun createBlocksTab(tree: Tree, headingLabel: JBLabel, withClearAll: Boolean): JBPanel<*> {
-        val buttons = JBPanel<JBPanel<*>>(FlowLayout(FlowLayout.RIGHT, 4, 0))
-        val clearSelectedButton = JButton("Clear selected")
-        clearSelectedButton.toolTipText = "Remove the marks of the selected blocks, files or folders. You can also press Delete."
-        clearSelectedButton.addActionListener { clearSelectedBlocks(tree) }
-        buttons.add(clearSelectedButton)
-        if (withClearAll) {
+    private fun createBlocksTab(tree: CheckboxTree, headingLabel: JBLabel, blockTab: BlockTab): JBPanel<*> {
+        val changeStateButton = JButton(blockTab.changeStateLabel, DotIcon(blockTab.changeStateColor))
+        changeStateButton.toolTipText = "${blockTab.changeStateLabel}: the ticked blocks, or the selected rows if none are ticked."
+        changeStateButton.addActionListener { changeStateOfBlocks(tree, blockTab) }
+        val removeButton = JButton(REMOVE_LABEL, AllIcons.Actions.Close)
+        removeButton.toolTipText = "Remove the marks of the ticked blocks, or the selected rows if none are ticked. Undo brings them back."
+        removeButton.addActionListener { removeBlocks(tree) }
+        val buttons = JBPanel<JBPanel<*>>(WrapLayout(FlowLayout.RIGHT, 4, 0))
+        buttons.add(changeStateButton)
+        buttons.add(removeButton)
+        if (blockTab == BlockTab.REVIEWED) {
             val clearAllButton = JButton("Clear all")
             clearAllButton.addActionListener { confirmAndClearAllMarks() }
             buttons.add(clearAllButton)
         }
+        fun refreshButtonCounts() {
+            val blockCount = targetBlocks(tree).size
+            val countText = if (blockCount == 0) "" else " ($blockCount)"
+            changeStateButton.text = blockTab.changeStateLabel + countText
+            removeButton.text = REMOVE_LABEL + countText
+            changeStateButton.isEnabled = blockCount > 0
+            removeButton.isEnabled = blockCount > 0
+        }
+        tree.addCheckboxTreeListener(object : CheckboxTreeListener {
+            override fun nodeStateChanged(node: CheckedTreeNode) = refreshButtonCounts()
+        })
+        tree.addTreeSelectionListener { refreshButtonCounts() }
+        tree.model.addTreeModelListener(object : TreeModelAdapter() {
+            override fun process(event: TreeModelEvent, type: EventType) = refreshButtonCounts()
+        })
+        refreshButtonCounts()
+        onRightClick(tree) { event -> showBlockMenu(tree, blockTab, event) }
+
         val headingRow = JBPanel<JBPanel<*>>(BorderLayout())
         headingRow.border = JBUI.Borders.empty(2, 6)
-        headingRow.add(headingLabel, BorderLayout.CENTER)
-        headingRow.add(buttons, BorderLayout.EAST)
+        headingRow.add(headingLabel, BorderLayout.NORTH)
+        headingRow.add(buttons, BorderLayout.CENTER)
 
         val blocksTab = JBPanel<JBPanel<*>>(BorderLayout())
         blocksTab.add(headingRow, BorderLayout.NORTH)
         blocksTab.add(JBScrollPane(tree), BorderLayout.CENTER)
         return blocksTab
+    }
+
+    fun blockMenuItems(tree: CheckboxTree, blockTab: BlockTab): List<JMenuItem> {
+        val blockCount = targetBlocks(tree).size
+        val countText = if (blockCount == 1) "1 block" else "$blockCount blocks"
+        val openItem = JMenuItem("Open", AllIcons.Actions.EditSource)
+        openItem.addActionListener { openSelectedBlock(tree) }
+        openItem.isEnabled = selectedItems<BlockOfFile>(tree).isNotEmpty()
+        val changeStateItem = JMenuItem("${blockTab.changeStateLabel}: $countText", DotIcon(blockTab.changeStateColor))
+        changeStateItem.addActionListener { changeStateOfBlocks(tree, blockTab) }
+        val removeItem = JMenuItem("$REMOVE_LABEL: $countText", AllIcons.Actions.Close)
+        removeItem.addActionListener { removeBlocks(tree) }
+        val tickAllItem = JMenuItem("Tick all")
+        tickAllItem.addActionListener { setAllTicked(tree, true) }
+        val untickAllItem = JMenuItem("Untick all")
+        untickAllItem.addActionListener { setAllTicked(tree, false) }
+        listOf(changeStateItem, removeItem).forEach { it.isEnabled = blockCount > 0 }
+        return listOf(openItem, changeStateItem, removeItem, tickAllItem, untickAllItem)
+    }
+
+    private fun showBlockMenu(tree: CheckboxTree, blockTab: BlockTab, event: MouseEvent) {
+        val clickedRow = tree.getClosestRowForLocation(event.x, event.y)
+        if (clickedRow >= 0 && !tree.isRowSelected(clickedRow)) tree.setSelectionRow(clickedRow)
+        val menu = JBPopupMenu()
+        blockMenuItems(tree, blockTab).forEachIndexed { itemIndex, item ->
+            if (itemIndex == FIRST_TICK_MENU_ITEM) menu.addSeparator()
+            menu.add(item)
+        }
+        menu.show(tree, event.x, event.y)
+    }
+
+    private fun onRightClick(tree: Tree, showMenu: (MouseEvent) -> Unit) {
+        tree.addMouseListener(object : MouseAdapter() {
+            override fun mousePressed(event: MouseEvent) {
+                if (event.isPopupTrigger) showMenu(event)
+            }
+
+            override fun mouseReleased(event: MouseEvent) {
+                if (event.isPopupTrigger) showMenu(event)
+            }
+        })
+    }
+
+    private fun setAllTicked(tree: CheckboxTree, ticked: Boolean) {
+        val root = tree.model.root as? CheckedTreeNode ?: return
+        tree.setNodeState(root, ticked)
+        tree.repaint()
     }
 
     private fun confirmAndClearAllMarks() {
@@ -409,24 +493,30 @@ class ReviewMarksPanel(
 
     private fun showBlocks(tree: Tree, headingLabel: JBLabel, filesWithBlocks: List<FileBlocks>) {
         headingLabel.text = "${filesWithBlocks.sumOf { it.codeLineCount }} lines in ${filesWithBlocks.size} files"
-        val root = DefaultMutableTreeNode()
+        val root = uncheckedNode(null)
         val fileTree = fileTreeOf(filesWithBlocks.map { relativePathOf(it.fileUrl) to it })
         fileTree.forEach { root.add(nodeOf(it)) }
         (tree.model as DefaultTreeModel).setRoot(root)
         TreeUtil.expandAll(tree)
     }
 
-    private fun nodeOf(entry: FileTreeEntry<FileBlocks>): DefaultMutableTreeNode = when (entry) {
+    private fun nodeOf(entry: FileTreeEntry<FileBlocks>): CheckedTreeNode = when (entry) {
         is FileTreeEntry.Folder -> {
-            val folderNode = DefaultMutableTreeNode(FolderRow(entry.name, codeLineCountIn(entry)))
+            val folderNode = uncheckedNode(FolderRow(entry.name, codeLineCountIn(entry)))
             entry.children.forEach { folderNode.add(nodeOf(it)) }
             folderNode
         }
         is FileTreeEntry.File -> {
-            val fileNode = DefaultMutableTreeNode(FileRow(entry.name, entry.item))
-            entry.item.rows.forEach { row -> fileNode.add(DefaultMutableTreeNode(BlockOfFile(entry.item.fileUrl, row))) }
+            val fileNode = uncheckedNode(FileRow(entry.name, entry.item))
+            entry.item.rows.forEach { row -> fileNode.add(uncheckedNode(BlockOfFile(entry.item.fileUrl, row))) }
             fileNode
         }
+    }
+
+    private fun uncheckedNode(item: Any?): CheckedTreeNode {
+        val node = CheckedTreeNode(item)
+        node.isChecked = false
+        return node
     }
 
     private fun codeLineCountIn(entry: FileTreeEntry<FileBlocks>): Int = when (entry) {
@@ -478,6 +568,14 @@ class ReviewMarksPanel(
         refresh()
     }
 
+    private fun createBlockTree(): CheckboxTree {
+        val tree = CheckboxTree(BlockTreeCellRenderer(), uncheckedNode(null))
+        tree.isRootVisible = false
+        tree.showsRootHandles = true
+        tree.selectionModel.selectionMode = TreeSelectionModel.DISCONTIGUOUS_TREE_SELECTION
+        return tree
+    }
+
     private fun createTree(renderer: TreeCellRenderer): Tree {
         val tree = Tree(DefaultTreeModel(DefaultMutableTreeNode()))
         tree.isRootVisible = false
@@ -495,19 +593,26 @@ class ReviewMarksPanel(
             .distinct()
     }
 
-    private fun clearSelectedBlocks(tree: Tree) {
-        val blocks = selectedItems<BlockOfFile>(tree)
-        if (blocks.isEmpty()) return
-        if (blocks.size > 1) {
-            val confirmed = Messages.showYesNoDialog(
-                project,
-                "Remove the marks of ${blocks.size} blocks?",
-                "Clear Selected Marks",
-                null,
-            ) == Messages.YES
-            if (!confirmed) return
+    private fun targetBlocks(tree: CheckboxTree): List<BlockOfFile> {
+        val tickedBlocks = tree.getCheckedNodes(BlockOfFile::class.java, null).toList()
+        return tickedBlocks.ifEmpty { selectedItems<BlockOfFile>(tree) }
+    }
+
+    private fun blockRangesOf(blocks: List<BlockOfFile>) =
+        blocks.map { block -> block.fileUrl to TextRange(block.row.startOffset, block.row.endOffset) }
+
+    private fun changeStateOfBlocks(tree: CheckboxTree, blockTab: BlockTab) {
+        val blocks = targetBlocks(tree)
+        when (blockTab) {
+            BlockTab.TO_REVIEW -> reviewMarks.markBlocksAsReviewed(blockRangesOf(blocks))
+            BlockTab.REVIEWED -> reviewMarks.markBlocksToReview(blockRangesOf(blocks))
         }
-        reviewMarks.clearMarkedBlocks(blocks.map { block -> block.fileUrl to TextRange(block.row.startOffset, block.row.endOffset) })
+        refresh()
+    }
+
+    private fun removeBlocks(tree: CheckboxTree) {
+        reviewMarks.clearMarkedBlocks(blockRangesOf(targetBlocks(tree)))
+        refresh()
     }
 
     private fun deleteSelectedNotes() {

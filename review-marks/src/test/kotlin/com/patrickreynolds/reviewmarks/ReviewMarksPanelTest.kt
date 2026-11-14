@@ -5,6 +5,8 @@ import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.ui.TestDialog
 import com.intellij.openapi.ui.TestDialogManager
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import com.intellij.ui.CheckboxTree
+import com.intellij.ui.CheckedTreeNode
 import com.intellij.util.ui.tree.TreeUtil
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBTabbedPane
@@ -141,25 +143,87 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
         }
     }
 
-    fun `test clear selected removes the marks of every selected block after asking`() {
+    private fun openPanelWithTwoBlocksToReview(): ReviewMarksPanel {
         myFixture.configureByText("Example.txt", documentText)
         val document = myFixture.editor.document
         reviewMarks().markRangeToReview(document, TextRange(0, "line one".length))
         reviewMarks().markRangeToReview(document, TextRange(lineFourEnd - "line four".length, lineFourEnd))
-        val panel = ReviewMarksPanel(project, testRootDisposable)
-        val toReviewTree = UIUtil.findComponentsOfType(panel, Tree::class.java).first()
-        assertEquals(2, blocksIn(toReviewTree).size)
+        return ReviewMarksPanel(project, testRootDisposable)
+    }
 
-        selectAllBlocks(toReviewTree)
-        TestDialogManager.setTestDialog(TestDialog.YES)
-        try {
-            buttonsOf(panel).first { it.text == "Clear selected" }.doClick()
-        } finally {
-            TestDialogManager.setTestDialog(TestDialog.DEFAULT)
-        }
-        panel.refresh()
+    private fun blockTrees(panel: ReviewMarksPanel) = UIUtil.findComponentsOfType(panel, CheckboxTree::class.java)
+
+    private fun nodesOf(tree: Tree): List<DefaultMutableTreeNode> =
+        (tree.model.root as DefaultMutableTreeNode).depthFirstEnumeration().toList().map { it as DefaultMutableTreeNode }
+
+    private fun tick(tree: CheckboxTree, node: DefaultMutableTreeNode) = tree.setNodeState(node as CheckedTreeNode, true)
+
+    private fun buttonStartingWith(panel: ReviewMarksPanel, label: String) = buttonsOf(panel).first { it.text.startsWith(label) && it.isEnabled }
+
+    fun `test ticking blocks and pressing mark reviewed marks just those blocks as reviewed`() {
+        val panel = openPanelWithTwoBlocksToReview()
+        val toReviewTree = blockTrees(panel).first()
+        val firstBlockNode = nodesOf(toReviewTree).first { it.userObject is BlockOfFile }
+
+        tick(toReviewTree, firstBlockNode)
+        val markReviewedButton = buttonStartingWith(panel, "Mark reviewed")
+        assertEquals("Mark reviewed (1)", markReviewedButton.text)
+        markReviewedButton.doClick()
+
+        assertEquals(1, blocksIn(toReviewTree).size)
+        assertEquals(1, reviewMarks().reviewedBlocks().single().rows.size)
+    }
+
+    fun `test ticking a file ticks all its blocks so remove clears every mark in it`() {
+        val panel = openPanelWithTwoBlocksToReview()
+        val toReviewTree = blockTrees(panel).first()
+        val fileNode = nodesOf(toReviewTree).first { it.userObject is FileRow }
+
+        tick(toReviewTree, fileNode)
+        val removeButton = buttonStartingWith(panel, "Remove")
+        assertEquals("Remove (2)", removeButton.text)
+        removeButton.doClick()
 
         assertEquals(emptyList<BlockOfFile>(), blocksIn(toReviewTree))
+        assertEquals("Cleared 2 blocks", reviewMarks().undoDescription)
+    }
+
+    fun `test selecting a folder row without ticking acts on every block inside it`() {
+        val panel = openPanelWithTwoBlocksToReview()
+        val toReviewTree = blockTrees(panel).first()
+        val folderOrFileNode = nodesOf(toReviewTree).last { it.userObject is FolderRow || it.userObject is FileRow }
+
+        toReviewTree.selectionPath = TreeUtil.getPathFromRoot(folderOrFileNode)
+        buttonStartingWith(panel, "Mark reviewed").doClick()
+
+        assertEquals(emptyList<BlockOfFile>(), blocksIn(toReviewTree))
+        assertEquals(2, reviewMarks().reviewedBlocks().single().rows.size)
+    }
+
+    fun `test the reviewed tab can send ticked blocks back to review and undo brings them back`() {
+        myFixture.configureByText("Example.txt", documentText)
+        reviewMarks().markRangeAsReviewed(myFixture.editor.document, TextRange(lineTwoStart, lineFourEnd))
+        val panel = ReviewMarksPanel(project, testRootDisposable)
+        tabs(panel).selectedIndex = 1
+        val reviewedTree = blockTrees(panel)[1]
+
+        tick(reviewedTree, nodesOf(reviewedTree).first { it.userObject is BlockOfFile })
+        buttonStartingWith(panel, "Mark to review").doClick()
+
+        assertEquals(emptyList<FileBlocks>(), reviewMarks().reviewedBlocks())
+        assertEquals("Marked a block to review", reviewMarks().undoDescription)
+        reviewMarks().undoLastClear()
+        assertEquals(1, reviewMarks().reviewedBlocks().size)
+    }
+
+    fun `test the right click menu offers open, mark reviewed, remove and tick all for the to review tab`() {
+        val panel = openPanelWithTwoBlocksToReview()
+        val toReviewTree = blockTrees(panel).first()
+        toReviewTree.selectionPath = TreeUtil.getPathFromRoot(nodesOf(toReviewTree).first { it.userObject is BlockOfFile })
+
+        val menuLabels = panel.blockMenuItems(toReviewTree, BlockTab.TO_REVIEW).map { it.text }
+
+        assertEquals(listOf("Open", "Mark reviewed: 1 block", "Remove: 1 block", "Tick all", "Untick all"), menuLabels)
     }
 
     fun `test the notes tab groups the notes under a header for each kind`() {

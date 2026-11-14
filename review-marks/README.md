@@ -32,7 +32,12 @@ Open the **Review Marks** tool window on the right. From top to bottom:
 - **Fold reviewed.** Folds reviewed blocks into one line, such as `✓ 12 reviewed lines`. Expand a fold to peek at it.
 - **Progress** for the open file, and below it the progress of all marked code in the project (with the PR, during a PR review).
 - **Undo**, after you clear marks or delete comments.
-- **Tabs.** *To review* and *Reviewed* show your marks as a file tree: folders, then files, then blocks (a chain of folders that each hold one folder is shown as one row). Select several rows (Cmd- or Shift-click), then press *Clear selected* or Delete. Selecting a file or folder selects all its blocks. *Reviewed* also has *Clear all*. *Notes* groups your comments under a header for each kind, with the file and lines of each one, and Claude's reply under an agent note. Click a header to fold it. Select comments and press *Delete selected* or Delete. *Today* shows the summary. Double-click or press Enter to open a row.
+- **Tabs.** *To review* and *Reviewed* show your marks as a file tree: folders, then files, then blocks (a chain of folders that each hold one folder is shown as one row). Each row has a checkbox. Ticking a folder or file ticks every block in it. Then:
+  - in *To review*, **Mark reviewed** turns the ticked blocks green;
+  - in *Reviewed*, **Mark to review** sends them back to review;
+  - **Remove** clears their marks (Delete does the same).
+
+  The buttons show how many blocks they will change. With nothing ticked, they use the selected rows instead (Cmd- or Shift-click to select several; a selected file or folder counts all its blocks). Right-click a row for the same actions, plus *Open*, *Tick all* and *Untick all*. Undo brings back what you changed. *Reviewed* also has *Clear all*. *Notes* groups your comments under a header for each kind, with the file and lines of each one, and Claude's reply under an agent note. Click a header to fold it. Select comments and press *Delete selected* or Delete. *Today* shows the summary. Double-click or press Enter to open a row.
 - **Pomodoro.** *Start reviewing!*, then *Pause* / *Resume* and *Finish*, with the minutes left. A link to Settings.
 
 Hover over a button to see what it does and its shortcut. The buttons work on the editor you last used. Everything is also in the right-click menu, under **Review Marks**.

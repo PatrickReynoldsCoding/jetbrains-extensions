@@ -209,6 +209,36 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         blocks.forEach { (fileUrl, blockRange) -> clearMarkedBlock(fileUrl, blockRange) }
     }
 
+    fun markBlocksAsReviewed(blocks: List<Pair<String, TextRange>>) {
+        if (blocks.isEmpty()) return
+        rememberForUndo(if (blocks.size == 1) "Marked a block as reviewed" else "Marked ${blocks.size} blocks as reviewed")
+        blocks.forEach { (fileUrl, blockRange) -> documentShowingMarks(fileUrl)?.let { markRangeAsReviewed(it, blockRange) } }
+        storeOpenDocumentsAndChangedFiles(blocks.map { it.first })
+    }
+
+    fun markBlocksToReview(blocks: List<Pair<String, TextRange>>) {
+        if (blocks.isEmpty()) return
+        rememberForUndo(if (blocks.size == 1) "Marked a block to review" else "Marked ${blocks.size} blocks to review")
+        blocks.forEach { (fileUrl, blockRange) -> documentShowingMarks(fileUrl)?.let { markRangeToReview(it, blockRange) } }
+        storeOpenDocumentsAndChangedFiles(blocks.map { it.first })
+    }
+
+    private fun documentShowingMarks(fileUrl: String): Document? {
+        val file = VirtualFileManager.getInstance().findFileByUrl(fileUrl) ?: return null
+        val document = FileDocumentManager.getInstance().getDocument(file) ?: return null
+        showStoredMarks(document, file)
+        return document
+    }
+
+    private fun storeOpenDocumentsAndChangedFiles(fileUrls: List<String>) {
+        fileUrls.distinct().forEach { fileUrl ->
+            val file = VirtualFileManager.getInstance().findFileByUrl(fileUrl) ?: return@forEach
+            val document = FileDocumentManager.getInstance().getCachedDocument(file) ?: return@forEach
+            storeMarksOf(document, file)
+        }
+        announceReviewStateChanged()
+    }
+
     val undoDescription: String? get() = undoSnapshots.lastOrNull()?.description
 
     fun undoLastClear() {

@@ -2,7 +2,7 @@ package com.patrickreynolds.reviewmarks
 
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.fileTypes.FileTypeManager
-import com.intellij.ui.ColoredTreeCellRenderer
+import com.intellij.ui.CheckboxTree
 import com.intellij.ui.SimpleTextAttributes
 import javax.swing.JTree
 import javax.swing.tree.DefaultMutableTreeNode
@@ -25,35 +25,36 @@ private val COLOR_BY_BLOCK_KIND = mapOf(
     BlockKind.TO_REVIEW to TO_REVIEW_ACCENT,
 )
 
-class BlockTreeCellRenderer : ColoredTreeCellRenderer() {
+class BlockTreeCellRenderer : CheckboxTree.CheckboxTreeCellRenderer() {
 
-    override fun customizeCellRenderer(
+    override fun customizeRenderer(
         tree: JTree,
-        value: Any?,
+        value: Any,
         selected: Boolean,
         expanded: Boolean,
         leaf: Boolean,
         row: Int,
         hasFocus: Boolean,
     ) {
+        val text = textRenderer
         when (val shownItem = (value as? DefaultMutableTreeNode)?.userObject) {
             is FolderRow -> {
-                icon = AllIcons.Nodes.Folder
-                append(shownItem.name)
-                append("   ${shownItem.codeLineCount} lines", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                text.icon = AllIcons.Nodes.Folder
+                text.append(shownItem.name)
+                text.append("   ${shownItem.codeLineCount} lines", SimpleTextAttributes.GRAYED_ATTRIBUTES)
             }
             is FileRow -> {
-                icon = FileTypeManager.getInstance().getFileTypeByFileName(shownItem.name).icon
-                append(shownItem.name, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
-                append("   ${shownItem.fileBlocks.codeLineCount} lines", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                text.icon = FileTypeManager.getInstance().getFileTypeByFileName(shownItem.name).icon
+                text.append(shownItem.name, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+                text.append("   ${shownItem.fileBlocks.codeLineCount} lines", SimpleTextAttributes.GRAYED_ATTRIBUTES)
             }
             is BlockOfFile -> {
                 val blockRow = shownItem.row
                 val kindColor = COLOR_BY_BLOCK_KIND.getValue(blockRow.kind)
-                icon = DotIcon(kindColor)
-                append("${LABEL_BY_BLOCK_KIND.getValue(blockRow.kind)} ", SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, kindColor))
-                append("lines ${blockRow.firstLine}–${blockRow.lastLine}")
-                append("   ${blockRow.preview}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                text.icon = DotIcon(kindColor)
+                text.append("${LABEL_BY_BLOCK_KIND.getValue(blockRow.kind)} ", SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, kindColor))
+                text.append("lines ${blockRow.firstLine}–${blockRow.lastLine}")
+                text.append("   ${blockRow.preview}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
             }
         }
     }
