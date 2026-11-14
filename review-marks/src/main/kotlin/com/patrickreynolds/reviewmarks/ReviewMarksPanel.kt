@@ -26,6 +26,7 @@ import com.intellij.ui.treeStructure.Tree
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.tree.TreeUtil
 import java.awt.BorderLayout
+import java.awt.Component
 import java.awt.FlowLayout
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
@@ -33,6 +34,7 @@ import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.BoxLayout
 import javax.swing.JButton
+import javax.swing.JComponent
 import javax.swing.JProgressBar
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
@@ -55,8 +57,8 @@ class ReviewMarksPanel(
 
     private val foldCheckBox = JBCheckBox("Fold reviewed")
     private val pullRequestLabel = JBLabel()
-    private val postReviewButton = JButton("Post review…")
-    private val endPullRequestButton = JButton("End PR")
+    private val pullRequestRow = createPullRequestRow()
+    private val fileNameLabel = JBLabel()
     private val progressLabel = JBLabel()
     private val progressBar = JProgressBar(0, 100)
     private val tabs = JBTabbedPane()
@@ -112,19 +114,28 @@ class ReviewMarksPanel(
         topPanel.add(buttonRow(
             "Branch…" to "ReviewMarks.ReviewBranchChanges",
             "PR review…" to "ReviewMarks.StartPullRequestReview",
-        ).also { row ->
-            postReviewButton.addActionListener { runAction("ReviewMarks.PostPullRequestReview") }
-            endPullRequestButton.addActionListener { runAction("ReviewMarks.EndPullRequestReview") }
-            row.add(postReviewButton)
-            row.add(endPullRequestButton)
-        })
-        topPanel.add(pullRequestLabel)
+        ))
+        topPanel.add(pullRequestRow)
         topPanel.add(checkBoxRow(foldCheckBox))
+        topPanel.add(fileNameLabel)
         topPanel.add(progressLabel)
         topPanel.add(progressBar)
+        topPanel.components.forEach { (it as JComponent).alignmentX = Component.LEFT_ALIGNMENT }
 
         foldCheckBox.addActionListener { if (!refreshingFromState) reviewMarks.changeFoldMode(foldCheckBox.isSelected) }
         return topPanel
+    }
+
+    private fun createPullRequestRow(): JBPanel<*> {
+        val postReviewButton = JButton("Post review…")
+        val endPullRequestButton = JButton("End PR")
+        postReviewButton.addActionListener { runAction("ReviewMarks.PostPullRequestReview") }
+        endPullRequestButton.addActionListener { runAction("ReviewMarks.EndPullRequestReview") }
+        val row = JBPanel<JBPanel<*>>(FlowLayout(FlowLayout.LEFT, 4, 2))
+        row.add(pullRequestLabel)
+        row.add(postReviewButton)
+        row.add(endPullRequestButton)
+        return row
     }
 
     private fun buttonRow(vararg buttonLabelsAndActionIds: Pair<String, String>): JBPanel<*> {
@@ -246,26 +257,25 @@ class ReviewMarksPanel(
 
     private fun refreshPullRequestBanner() {
         val session = reviewMarks.pullRequest
-        pullRequestLabel.isVisible = session != null
-        postReviewButton.isVisible = session != null
-        endPullRequestButton.isVisible = session != null
+        pullRequestRow.isVisible = session != null
         if (session != null) {
             val commentCount = reviewMarks.pullRequestComments().size
-            pullRequestLabel.text = "PR #${session.number}: ${session.title}  ·  $commentCount comments"
-            pullRequestLabel.toolTipText = "${session.owner}/${session.repository} as ${session.accountName}"
+            pullRequestLabel.text = "PR #${session.number} · $commentCount comments"
+            pullRequestLabel.toolTipText = "${session.title} (${session.owner}/${session.repository} as ${session.accountName})"
         }
     }
 
     private fun refreshProgress() {
         val editor = FileEditorManager.getInstance(project).selectedTextEditor
         if (editor == null) {
-            progressLabel.text = "No file open"
+            fileNameLabel.text = "No file open"
+            progressLabel.text = ""
             progressBar.value = 0
             return
         }
-        val fileName = editor.virtualFile?.name ?: "This file"
         val progress = reviewMarks.progressOf(editor.document)
-        progressLabel.text = if (progress.markedLineCount == 0) "$fileName — no code marked yet" else "$fileName — ${progress.statusText()}"
+        fileNameLabel.text = editor.virtualFile?.name ?: "This file"
+        progressLabel.text = if (progress.markedLineCount == 0) "No code marked yet" else progress.statusText()
         progressBar.value = progress.percentReviewed
     }
 
