@@ -7,6 +7,9 @@ import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.components.service
+import com.intellij.openapi.editor.EditorFactory
+import com.intellij.openapi.editor.event.EditorMouseEvent
+import com.intellij.openapi.editor.event.EditorMouseListener
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
@@ -101,6 +104,8 @@ class ReviewMarksPanel(
     private val startReviewingButton = JButton("Start reviewing!", AllIcons.Actions.Execute)
     private val pauseOrResumeButton = JButton("Pause", AllIcons.Actions.Pause)
     private val finishButton = JButton("Finish", AllIcons.Actions.Suspend)
+    private val startBreakButton = JButton("Start break", AllIcons.Actions.Execute)
+    private val finishBreakButton = JButton("Finish break", AllIcons.Actions.Checked)
     private val pomodoroStatusLabel = JBLabel()
     private val collapsedNoteKinds = mutableSetOf<NoteKind>()
 
@@ -396,9 +401,13 @@ class ReviewMarksPanel(
         startReviewingButton.addActionListener { pomodoroTimer.start(System.currentTimeMillis()) }
         pauseOrResumeButton.addActionListener { pomodoroTimer.pauseOrResume(System.currentTimeMillis()) }
         finishButton.addActionListener {
-            pomodoroTimer.finish(System.currentTimeMillis())?.let { summary -> showReviewMarksMessage(project, summary) }
+            pomodoroTimer.finish(System.currentTimeMillis())?.let { summary -> showReviewMarksMessage(project, summary, soundName = null) }
         }
+        startBreakButton.addActionListener { pomodoroTimer.startBreak(System.currentTimeMillis()) }
+        finishBreakButton.addActionListener { pomodoroTimer.finishBreak(System.currentTimeMillis()) }
         footer.add(startReviewingButton)
+        footer.add(startBreakButton)
+        footer.add(finishBreakButton)
         footer.add(pauseOrResumeButton)
         footer.add(finishButton)
         footer.add(pomodoroStatusLabel)
@@ -409,7 +418,9 @@ class ReviewMarksPanel(
     private fun refreshPomodoro() {
         val pomodoroState = pomodoroTimer.pomodoroState
         startReviewingButton.isVisible = pomodoroState == null
-        pauseOrResumeButton.isVisible = pomodoroState != null
+        pauseOrResumeButton.isVisible = pomodoroState != null && pomodoroState !is PomodoroState.AwaitingBreak
+        startBreakButton.isVisible = pomodoroState is PomodoroState.AwaitingBreak
+        finishBreakButton.isVisible = pomodoroState?.phase == PomodoroPhase.ON_BREAK
         finishButton.isVisible = pomodoroState != null
         val paused = pomodoroState is PomodoroState.Paused
         pauseOrResumeButton.text = if (paused) "Resume" else "Pause"
@@ -427,6 +438,14 @@ class ReviewMarksPanel(
                     refreshIfShowing()
                 }
             },
+        )
+        EditorFactory.getInstance().eventMulticaster.addEditorMouseListener(
+            object : EditorMouseListener {
+                override fun mouseClicked(event: EditorMouseEvent) {
+                    if (isShowing && event.editor.project == project) syncSidebarWithEditor()
+                }
+            },
+            parentDisposable,
         )
         addHierarchyListener { refreshIfShowing() }
         val pomodoroClock = Timer(POMODORO_CLOCK_MILLISECONDS) {
@@ -489,7 +508,37 @@ class ReviewMarksPanel(
             NOTES_TAB -> showNotes(reviewMarks.allNotes())
             TODAY_TAB -> todayText.text = reviewMarks.reviewSummaryToday().text()
         }
+        syncSidebarWithEditor()
     }
+
+    fun syncSidebarWithEditor() {
+        if (!service<ReviewMarksSettings>().state.syncSidebarWithEditor) return
+        val tree = shownBlockTree() ?: return
+        val editor = FileEditorManager.getInstance(project).selectedTextEditor ?: return
+        val fileUrl = editor.virtualFile?.url ?: return
+        val blockUnderCaret = blockContainingOffset(blocksIn(tree), fileUrl, editor.caretModel.offset)
+        val nodeToSelect = nodeShowing(tree, blockUnderCaret) ?: fileNodeOf(tree, fileUrl) ?: return
+        val pathToSelect = TreeUtil.getPathFromRoot(nodeToSelect)
+        tree.selectionPath = pathToSelect
+        tree.scrollPathToVisible(pathToSelect)
+    }
+
+    private fun shownBlockTree(): CheckboxTree? = when (tabs.selectedIndex) {
+        TO_REVIEW_TAB -> toReviewTree
+        REVIEWED_TAB -> reviewedTree
+        else -> null
+    }
+
+    private fun nodesOf(tree: Tree): List<DefaultMutableTreeNode> =
+        (tree.model.root as DefaultMutableTreeNode).depthFirstEnumeration().toList().map { it as DefaultMutableTreeNode }
+
+    private fun blocksIn(tree: Tree): List<BlockOfFile> = nodesOf(tree).mapNotNull { it.userObject as? BlockOfFile }
+
+    private fun nodeShowing(tree: Tree, block: BlockOfFile?): DefaultMutableTreeNode? =
+        block?.let { nodesOf(tree).firstOrNull { node -> node.userObject === block } }
+
+    private fun fileNodeOf(tree: Tree, fileUrl: String): DefaultMutableTreeNode? =
+        nodesOf(tree).firstOrNull { node -> (node.userObject as? FileRow)?.fileBlocks?.fileUrl == fileUrl }
 
     private fun showBlocks(tree: Tree, headingLabel: JBLabel, filesWithBlocks: List<FileBlocks>) {
         headingLabel.text = "${filesWithBlocks.sumOf { it.codeLineCount }} lines in ${filesWithBlocks.size} files"

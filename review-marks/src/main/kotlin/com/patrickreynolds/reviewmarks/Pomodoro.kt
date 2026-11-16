@@ -2,7 +2,7 @@ package com.patrickreynolds.reviewmarks
 
 private const val MILLISECONDS_PER_MINUTE = 60_000L
 
-enum class PomodoroPhase(val label: String) { WORKING("Reviewing"), ON_BREAK("Break") }
+enum class PomodoroPhase(val label: String) { WORKING("Reviewing"), BREAK_READY("Break ready"), ON_BREAK("Break") }
 
 sealed interface PomodoroState {
     val phase: PomodoroPhase
@@ -10,6 +10,10 @@ sealed interface PomodoroState {
     data class Running(override val phase: PomodoroPhase, val phaseStartedAtMillis: Long) : PomodoroState
 
     data class Paused(override val phase: PomodoroPhase, val millisSpentInPhase: Long) : PomodoroState
+
+    data object AwaitingBreak : PomodoroState {
+        override val phase = PomodoroPhase.BREAK_READY
+    }
 }
 
 data class PomodoroLengths(
@@ -32,13 +36,25 @@ fun pausedPomodoro(running: PomodoroState.Running, nowMillis: Long): PomodoroSta
 fun resumedPomodoro(paused: PomodoroState.Paused, nowMillis: Long): PomodoroState =
     PomodoroState.Running(paused.phase, nowMillis - paused.millisSpentInPhase)
 
-fun stepPomodoro(stateBeforeStep: PomodoroState?, nowMillis: Long, lengths: PomodoroLengths): PomodoroStep {
+fun startedBreak(nowMillis: Long): PomodoroState = PomodoroState.Running(PomodoroPhase.ON_BREAK, nowMillis)
+
+fun finishedBreak(nowMillis: Long): PomodoroState = PomodoroState.Running(PomodoroPhase.WORKING, nowMillis)
+
+fun stepPomodoro(
+    stateBeforeStep: PomodoroState?,
+    nowMillis: Long,
+    lengths: PomodoroLengths,
+    startBreaksAutomatically: Boolean,
+): PomodoroStep {
     if (stateBeforeStep !is PomodoroState.Running) return PomodoroStep(stateBeforeStep, message = null)
     val minutesInPhase = (nowMillis - stateBeforeStep.phaseStartedAtMillis) / MILLISECONDS_PER_MINUTE
     if (minutesInPhase < lengths.minutesOf(stateBeforeStep.phase)) return PomodoroStep(stateBeforeStep, message = null)
     return when (stateBeforeStep.phase) {
-        PomodoroPhase.WORKING -> PomodoroStep(PomodoroState.Running(PomodoroPhase.ON_BREAK, nowMillis), breakStartsMessage(lengths))
-        PomodoroPhase.ON_BREAK -> PomodoroStep(PomodoroState.Running(PomodoroPhase.WORKING, nowMillis), breakOverMessage(lengths))
+        PomodoroPhase.WORKING ->
+            if (startBreaksAutomatically) PomodoroStep(startedBreak(nowMillis), breakStartsMessage(lengths))
+            else PomodoroStep(PomodoroState.AwaitingBreak, breakReadyMessage(lengths))
+        PomodoroPhase.ON_BREAK -> PomodoroStep(finishedBreak(nowMillis), breakOverMessage(lengths))
+        PomodoroPhase.BREAK_READY -> PomodoroStep(stateBeforeStep, message = null)
     }
 }
 
@@ -46,12 +62,14 @@ fun minutesLeftInPhase(state: PomodoroState, nowMillis: Long, lengths: PomodoroL
     val millisSpent = when (state) {
         is PomodoroState.Running -> nowMillis - state.phaseStartedAtMillis
         is PomodoroState.Paused -> state.millisSpentInPhase
+        is PomodoroState.AwaitingBreak -> 0L
     }
     return maxOf(0L, lengths.minutesOf(state.phase) - millisSpent / MILLISECONDS_PER_MINUTE)
 }
 
 fun pomodoroStatusText(state: PomodoroState?, nowMillis: Long, lengths: PomodoroLengths): String {
     if (state == null) return "${lengths.workMinutes} min reviewing, ${lengths.breakMinutes} min break"
+    if (state is PomodoroState.AwaitingBreak) return "${state.phase.label} · press Start break"
     val minutesLeft = minutesLeftInPhase(state, nowMillis, lengths)
     val pausedText = if (state is PomodoroState.Paused) "Paused · " else ""
     return "$pausedText${state.phase.label} · $minutesLeft min left"
@@ -76,7 +94,7 @@ fun millisReviewing(state: PomodoroState?, session: PomodoroSession, nowMillis: 
 fun sessionAfterStep(session: PomodoroSession, stateBeforeStep: PomodoroState?, stateAfterStep: PomodoroState?, nowMillis: Long): PomodoroSession {
     val reviewPeriodEnded = stateBeforeStep is PomodoroState.Running &&
         stateBeforeStep.phase == PomodoroPhase.WORKING &&
-        stateAfterStep?.phase == PomodoroPhase.ON_BREAK
+        stateAfterStep != null && stateAfterStep.phase != PomodoroPhase.WORKING
     if (!reviewPeriodEnded) return session
     return session.copy(
         completedReviewPeriods = session.completedReviewPeriods + 1,
@@ -100,6 +118,9 @@ fun pomodoroSummaryText(minutesReviewing: Long, completedReviewPeriods: Int, lin
 
 private fun breakStartsMessage(lengths: PomodoroLengths) =
     "Time for a ${lengths.breakMinutes} minute break. Step away from the screen. Your marks are saved."
+
+private fun breakReadyMessage(lengths: PomodoroLengths) =
+    "Review period over. Press Start break when you are ready for a ${lengths.breakMinutes} minute break. Your marks are saved."
 
 private fun breakOverMessage(lengths: PomodoroLengths) =
     "Break over. A new ${lengths.workMinutes} minute review period starts now. Press Where I stopped to pick up where you were."

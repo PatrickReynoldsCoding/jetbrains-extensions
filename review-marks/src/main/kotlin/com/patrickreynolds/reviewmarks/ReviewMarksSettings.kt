@@ -8,9 +8,16 @@ import com.intellij.openapi.components.Storage
 class ReviewMarksSettingsState {
     var workMinutes: Int = 25
     var breakMinutes: Int = 5
+    var startBreaksAutomatically: Boolean = false
     var defaultBaseBranch: String = "main"
     var notesFloatByDefault: Boolean = true
+    var syncSidebarWithEditor: Boolean = true
     var gitHubHostAliases: String = "github-personal=github.com"
+    var focusAlertEnabled: Boolean = true
+    var focusAlertMessage: String = DEFAULT_FOCUS_ALERT_MESSAGE
+    var focusAlertCooldownSeconds: Int = DEFAULT_FOCUS_ALERT_COOLDOWN_SECONDS
+    var focusAlertSoundEnabled: Boolean = false
+    var focusAlertSoundName: String = DEFAULT_FOCUS_ALERT_SOUND_NAME
 
     fun pomodoroLengths() = PomodoroLengths(workMinutes, breakMinutes)
 }

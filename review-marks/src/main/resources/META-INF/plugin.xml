@@ -7,6 +7,11 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>org.jetbrains.plugins.github</depends>
 
+    <applicationListeners>
+        <listener class="com.patrickreynolds.reviewmarks.FocusAlertListener"
+                  topic="com.intellij.openapi.application.ApplicationActivationListener"/>
+    </applicationListeners>
+
     <extensions defaultExtensionNs="com.intellij">
         <editorFactoryListener implementation="com.patrickreynolds.reviewmarks.ReviewMarksEditorListener"/>
         <applicationConfigurable parentId="tools"

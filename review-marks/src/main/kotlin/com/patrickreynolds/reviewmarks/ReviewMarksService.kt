@@ -318,7 +318,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         }
         val movedNoteCount = showStoredNotes(document, file)
         storeMarksOf(document, file)
-        unplacedText(file.name, removedMarkCount, movedNoteCount)?.let { showReviewMarksMessage(project, it) }
+        unplacedText(file.name, removedMarkCount, movedNoteCount)?.let { showReviewMarksMessage(project, it, soundName = null) }
         showFloatingNotesOf(document)
         afterChangesUpdate.request()
     }

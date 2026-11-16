@@ -143,6 +143,34 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
         }
     }
 
+    fun `test start break shows when a pomodoro waits for its break, then finish break shows during it`() {
+        val panel = openPanelWithLinesTwoToFourToReview()
+        val timer = project.service<PomodoroTimer>()
+        val startBreakButton = buttonsOf(panel).first { it.text == "Start break" }
+        val finishBreakButton = buttonsOf(panel).first { it.text == "Finish break" }
+        try {
+            timer.start(0)
+            timer.checkNow(Long.MAX_VALUE / 2)
+            panel.refresh()
+            assertEquals(PomodoroState.AwaitingBreak, timer.pomodoroState)
+            assertTrue(startBreakButton.isVisible)
+            assertFalse(finishBreakButton.isVisible)
+
+            startBreakButton.doClick()
+            panel.refresh()
+            assertEquals(PomodoroPhase.ON_BREAK, timer.pomodoroState?.phase)
+            assertFalse(startBreakButton.isVisible)
+            assertTrue(finishBreakButton.isVisible)
+
+            finishBreakButton.doClick()
+            panel.refresh()
+            assertEquals(PomodoroPhase.WORKING, timer.pomodoroState?.phase)
+            assertFalse(startBreakButton.isVisible || finishBreakButton.isVisible)
+        } finally {
+            timer.finish(0)
+        }
+    }
+
     private fun openPanelWithTwoBlocksToReview(): ReviewMarksPanel {
         myFixture.configureByText("Example.txt", documentText)
         val document = myFixture.editor.document
@@ -319,6 +347,45 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
             assertEquals(emptyList<StoredNote>(), reviewMarks().allNotes())
         } finally {
             repliesFile.delete()
+        }
+    }
+
+    private fun selectedItemOf(tree: Tree) = (tree.lastSelectedPathComponent as? DefaultMutableTreeNode)?.userObject
+
+    fun `test the sidebar highlights the block under the caret when the editor is clicked`() {
+        val panel = openPanelWithLinesTwoToFourToReview()
+        val toReviewTree = UIUtil.findComponentsOfType(panel, Tree::class.java).first()
+        assertTrue(selectedItemOf(toReviewTree) is FileRow)
+
+        myFixture.editor.caretModel.moveToOffset(lineTwoStart + 2)
+        panel.syncSidebarWithEditor()
+
+        assertSame(blocksIn(toReviewTree).single(), selectedItemOf(toReviewTree))
+    }
+
+    fun `test the sidebar highlights the open file when the caret is outside every block`() {
+        val panel = openPanelWithLinesTwoToFourToReview()
+        val toReviewTree = UIUtil.findComponentsOfType(panel, Tree::class.java).first()
+
+        myFixture.editor.caretModel.moveToOffset(0)
+        panel.syncSidebarWithEditor()
+
+        assertEquals("Example.txt", (selectedItemOf(toReviewTree) as FileRow).name)
+    }
+
+    fun `test the sidebar does not follow the editor when the setting is off`() {
+        val settingsState = service<ReviewMarksSettings>().state
+        settingsState.syncSidebarWithEditor = false
+        try {
+            val panel = openPanelWithLinesTwoToFourToReview()
+            val toReviewTree = UIUtil.findComponentsOfType(panel, Tree::class.java).first()
+
+            myFixture.editor.caretModel.moveToOffset(lineTwoStart + 2)
+            panel.syncSidebarWithEditor()
+
+            assertNull(selectedItemOf(toReviewTree))
+        } finally {
+            settingsState.syncSidebarWithEditor = true
         }
     }
 }

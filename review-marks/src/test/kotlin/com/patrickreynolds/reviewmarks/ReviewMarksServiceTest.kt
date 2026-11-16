@@ -506,6 +506,7 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
         try {
             pomodoroSettings.workMinutes = 25
             pomodoroSettings.breakMinutes = 5
+            pomodoroSettings.startBreaksAutomatically = true
 
             timer.start(0)
             timer.checkNow(24 * minute)
@@ -524,6 +525,7 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
         } finally {
             pomodoroSettings.workMinutes = previousLengths.first
             pomodoroSettings.breakMinutes = previousLengths.second
+            pomodoroSettings.startBreaksAutomatically = false
             timer.finish(0)
         }
     }

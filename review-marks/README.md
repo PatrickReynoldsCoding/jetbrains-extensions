@@ -95,7 +95,11 @@ Things to know:
 
 ## Pomodoro
 
-Press **Start reviewing!** at the bottom of the sidebar. The timer counts your review minutes (25 to start). When they are up, a message says it is time for a break (5 minutes to start). When the break is over, a message says the next review period starts. It repeats until you press **Finish**, which sums up the session: the minutes you reviewed, the full review periods and the lines you marked as reviewed. **Pause** stops the clock, and **Resume** carries on where it was. If you close the IDE while the timer runs, it comes back paused. The messages stay in the corner until you close them. Nothing is blocked. Set the minutes in Settings, Tools, Review Marks.
+Press **Start reviewing!** at the bottom of the sidebar. The timer counts your review minutes (25 to start). When they are up, a Mac notification says it is time for a break, and the sidebar shows **Start break**. Press **Finish break** to end the break early; otherwise it ends after 5 minutes and the next review period starts. To start breaks by yourself, turn on "Start breaks automatically" in Settings. It repeats until you press **Finish**, which sums up the session: the minutes you reviewed, the full review periods and the lines you marked as reviewed. **Pause** stops the clock, and **Resume** carries on where it was. If you close the IDE while the timer runs, it comes back paused. Nothing is blocked. Set the minutes in Settings, Tools, Review Marks.
+
+**Focus alert.** While a review period runs, a Mac notification says "Hey! keep focus, you're supposed to be reviewing!" when you leave IntelliJ, at most once every 30 seconds. You can change the message, the cooldown and switch it off in Settings. There is also an optional sound (off by default) that you can pick from the macOS alert sounds.
+
+**Sidebar sync.** The open file, and the block under a click in the editor, are highlighted in the sidebar and scrolled into view. You can turn this off in Settings.
 
 ## Keyboard shortcuts
 

@@ -50,8 +50,24 @@ class PomodoroTimer(private val project: Project) : PersistentStateComponent<Pom
         pomodoroState = when (val currentState = pomodoroState) {
             is PomodoroState.Running -> pausedPomodoro(currentState, nowMillis)
             is PomodoroState.Paused -> resumedPomodoro(currentState, nowMillis).also { scheduleChecks() }
+            is PomodoroState.AwaitingBreak -> currentState
             null -> null
         }
+        announceChange()
+    }
+
+    @Synchronized
+    fun startBreak(nowMillis: Long) {
+        if (pomodoroState !is PomodoroState.AwaitingBreak) return
+        pomodoroState = startedBreak(nowMillis)
+        announceChange()
+    }
+
+    @Synchronized
+    fun finishBreak(nowMillis: Long) {
+        if (pomodoroState?.phase != PomodoroPhase.ON_BREAK) return
+        pomodoroState = finishedBreak(nowMillis)
+        scheduleChecks()
         announceChange()
     }
 
@@ -69,11 +85,11 @@ class PomodoroTimer(private val project: Project) : PersistentStateComponent<Pom
     @Synchronized
     fun checkNow(nowMillis: Long) {
         val stateBeforeStep = pomodoroState
-        val step = stepPomodoro(stateBeforeStep, nowMillis, lengths())
+        val step = stepPomodoro(stateBeforeStep, nowMillis, lengths(), service<ReviewMarksSettings>().state.startBreaksAutomatically)
         pomodoroState = step.stateAfterStep
         session = sessionAfterStep(session, stateBeforeStep, step.stateAfterStep, nowMillis)
         step.message?.let { message ->
-            ApplicationManager.getApplication().invokeLater({ showReviewMarksMessage(project, message) }, project.disposed)
+            ApplicationManager.getApplication().invokeLater({ showReviewMarksMessage(project, message, soundName = null) }, project.disposed)
             announceChange()
         }
     }
@@ -92,6 +108,7 @@ class PomodoroTimer(private val project: Project) : PersistentStateComponent<Pom
                 savedState.phaseStartedAtMillis = currentState.phaseStartedAtMillis
             }
             is PomodoroState.Paused -> savedState.millisSpentInPhase = currentState.millisSpentInPhase
+            is PomodoroState.AwaitingBreak -> Unit
         }
         savedState.completedReviewPeriods = session.completedReviewPeriods
         savedState.millisReviewedInEarlierPeriods = session.millisReviewedInEarlierPeriods
@@ -104,6 +121,7 @@ class PomodoroTimer(private val project: Project) : PersistentStateComponent<Pom
         val savedPhase = PomodoroPhase.entries.firstOrNull { it.name == state.phase }
         val savedState = when {
             savedPhase == null -> null
+            savedPhase == PomodoroPhase.BREAK_READY -> PomodoroState.AwaitingBreak
             state.running -> PomodoroState.Running(savedPhase, state.phaseStartedAtMillis)
             else -> PomodoroState.Paused(savedPhase, state.millisSpentInPhase)
         }
