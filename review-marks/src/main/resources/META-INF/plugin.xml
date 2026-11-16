@@ -6,6 +6,12 @@
 
     <depends>com.intellij.modules.platform</depends>
     <depends>org.jetbrains.plugins.github</depends>
+    <depends>Git4Idea</depends>
+
+    <projectListeners>
+        <listener class="com.patrickreynolds.reviewmarks.FollowGitBranchListener"
+                  topic="git4idea.repo.GitRepositoryChangeListener"/>
+    </projectListeners>
 
     <applicationListeners>
         <listener class="com.patrickreynolds.reviewmarks.FocusAlertListener"
@@ -13,6 +19,7 @@
     </applicationListeners>
 
     <extensions defaultExtensionNs="com.intellij">
+        <postStartupActivity implementation="com.patrickreynolds.reviewmarks.FollowGitBranchOnStartup"/>
         <editorFactoryListener implementation="com.patrickreynolds.reviewmarks.ReviewMarksEditorListener"/>
         <applicationConfigurable parentId="tools"
                                  id="ReviewMarks.Settings"

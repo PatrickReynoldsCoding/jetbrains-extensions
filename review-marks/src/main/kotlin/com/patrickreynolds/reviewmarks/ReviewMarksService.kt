@@ -65,6 +65,10 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
 
     private var lastStop: StoredStop? = null
 
+    private var activeBranch: String? = null
+
+    private val marksOfOtherBranches = mutableMapOf<String, StoredBranchMarks>()
+
     private var reviewLog: List<ReviewLogEntry> = emptyList()
 
     init {
@@ -86,11 +90,13 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         logNewlyReviewedLines(document, range)
         replaceMarksIn(document, range, MarkState.REVIEWED)
         rememberStop(document, range)
+        storeOpenDocuments()
         afterChangesUpdate.request()
     }
 
     fun markRangeToReview(document: Document, range: TextRange) {
         replaceMarksIn(document, range, MarkState.TO_REVIEW)
+        storeOpenDocuments()
         afterChangesUpdate.request()
     }
 
@@ -120,6 +126,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
     fun clearMarksContaining(document: Document, offset: Int) {
         rememberForUndo("Cleared a mark")
         ReviewedMarkHighlighters.remove(project, document, marksContaining(document, offset))
+        storeOpenDocuments()
         afterChangesUpdate.request()
     }
 
@@ -247,6 +254,42 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         storedMarksByFileUrl.putAll(snapshot.marks.groupBy { it.fileUrl })
         storedNotesByFileUrl.clear()
         storedNotesByFileUrl.putAll(snapshot.notes.groupBy { it.fileUrl })
+        showStoredMarksAgainInOpenDocuments()
+        afterChangesUpdate.request()
+        announceReviewStateChanged()
+    }
+
+    val currentBranch: String? get() = activeBranch
+
+    fun switchToBranch(newBranch: String) {
+        val previousBranch = activeBranch
+        if (newBranch == previousBranch) return
+        if (previousBranch == null) {
+            activeBranch = newBranch
+            return
+        }
+        marksOfOtherBranches[previousBranch] = StoredBranchMarks(
+            branch = previousBranch,
+            marks = storedMarksByFileUrl.values.flatten().toMutableList(),
+            notes = storedNotesByFileUrl.values.flatten().toMutableList(),
+            lastStop = lastStop,
+            pullRequest = pullRequest,
+        )
+        val marksOfNewBranch = marksOfOtherBranches.remove(newBranch) ?: StoredBranchMarks(branch = newBranch)
+        storedMarksByFileUrl.clear()
+        storedMarksByFileUrl.putAll(marksOfNewBranch.marks.groupBy { it.fileUrl })
+        storedNotesByFileUrl.clear()
+        storedNotesByFileUrl.putAll(marksOfNewBranch.notes.groupBy { it.fileUrl })
+        lastStop = marksOfNewBranch.lastStop
+        pullRequest = marksOfNewBranch.pullRequest
+        undoSnapshots.clear()
+        activeBranch = newBranch
+        showStoredMarksAgainInOpenDocuments()
+        afterChangesUpdate.request()
+        announceReviewStateChanged()
+    }
+
+    private fun showStoredMarksAgainInOpenDocuments() {
         FileEditorManager.getInstance(project).openFiles.forEach { openFile ->
             val openDocument = FileDocumentManager.getInstance().getCachedDocument(openFile) ?: return@forEach
             ReviewedMarkHighlighters.remove(project, openDocument, ReviewedMarkHighlighters.inDocument(project, openDocument))
@@ -255,8 +298,6 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             showStoredMarks(openDocument, openFile)
         }
         refreshNoteInlays()
-        afterChangesUpdate.request()
-        announceReviewStateChanged()
     }
 
     private fun rememberForUndo(description: String) {
@@ -276,14 +317,16 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         val file = VirtualFileManager.getInstance().findFileByUrl(fileUrl)
         val openDocument = file?.let { FileDocumentManager.getInstance().getCachedDocument(it) }
         if (openDocument != null && file != null && openDocument.getUserData(DOCUMENT_SHOWS_STORED_MARKS) == true) {
-            val marksInBlock = ReviewedMarkHighlighters.inDocument(project, openDocument).filter { blockRange.contains(it.range) }
+            val marksInBlock = ReviewedMarkHighlighters.inDocument(project, openDocument)
+                .filter { markBelongsToBlock(openDocument.text, it.range, blockRange) }
             ReviewedMarkHighlighters.remove(project, openDocument, marksInBlock)
             storeMarksOf(openDocument, file)
         } else {
             val documentText = rangesOfFile(fileUrl)?.documentText.orEmpty()
             val marksToKeep = storedMarksByFileUrl[fileUrl].orEmpty().filterNot { storedMark ->
                 val markStart = locateMarkedText(documentText, storedMark.markedText, storedMark.startOffset)
-                markStart != null && blockRange.contains(TextRange(markStart, markStart + storedMark.markedText.length))
+                markStart != null &&
+                    markBelongsToBlock(documentText, TextRange(markStart, markStart + storedMark.markedText.length), blockRange)
             }
             if (marksToKeep.isEmpty()) storedMarksByFileUrl.remove(fileUrl) else storedMarksByFileUrl[fileUrl] = marksToKeep
         }
@@ -458,6 +501,8 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             lastStop = lastStop,
             reviewLog = reviewLog.toMutableList(),
             pullRequest = pullRequest,
+            branch = activeBranch.orEmpty(),
+            otherBranches = marksOfOtherBranches.values.map { it.copy() }.toMutableList(),
         )
     }
 
@@ -470,6 +515,9 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         lastStop = state.lastStop
         reviewLog = state.reviewLog.toList()
         pullRequest = state.pullRequest
+        activeBranch = state.branch.ifEmpty { null }
+        marksOfOtherBranches.clear()
+        marksOfOtherBranches.putAll(state.otherBranches.associateBy { it.branch })
         undoSnapshots.clear()
     }
 
@@ -521,6 +569,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
     }
 
     private fun afterChanges() {
+        storeOpenDocuments()
         refreshProgressWidget()
         refoldOpenDocuments()
         refreshNoteInlays()

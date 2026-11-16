@@ -19,6 +19,7 @@ repositories {
 dependencies {
     intellijPlatform {
         local(providers.gradleProperty("platformPath"))
+        bundledPlugin("Git4Idea")
         bundledPlugin("org.jetbrains.plugins.github")
         testFramework(TestFrameworkType.Platform)
         testBundledPlugin("com.intellij.java")

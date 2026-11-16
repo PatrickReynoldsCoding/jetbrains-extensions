@@ -740,6 +740,60 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
         assertEquals(1, ReviewNoteHighlighters.inDocument(project, document).size)
     }
 
+    fun `test removing a block removes a mark that ends in the middle of the next line`() {
+        myFixture.configureByText("Example.txt", documentText)
+        val document = myFixture.editor.document
+        val fileUrl = myFixture.file.virtualFile.url
+        reviewMarks().markRangeToReview(document, TextRange(lineTwoStart, lineThreeStart + "line".length))
+        val blockOfLineTwo = TextRange(lineTwoStart, lineTwoStart + "line two".length)
+
+        reviewMarks().clearMarkedBlocks(listOf(fileUrl to blockOfLineTwo))
+
+        assertEquals(emptyList<Triple<MarkState, Int, Int>>(), marks(document))
+    }
+
+    fun `test each branch keeps its own marks and notes`() {
+        val document = openDocumentWithLinesTwoToFourReviewed()
+        addNoteOnLine(document, lineThreeStart, plainNote)
+        reviewMarks().switchToBranch("feature-a")
+
+        reviewMarks().switchToBranch("feature-b")
+
+        assertEquals(emptyList<Triple<MarkState, Int, Int>>(), marks(document))
+        assertEquals(0, ReviewNoteHighlighters.inDocument(project, document).size)
+
+        reviewMarks().markRangeToReview(document, TextRange(lineThreeStart, lineThreeEnd))
+        reviewMarks().switchToBranch("feature-a")
+
+        assertEquals(listOf(Triple(MarkState.REVIEWED, lineTwoStart, lineFourEnd)), marks(document))
+        assertEquals(1, ReviewNoteHighlighters.inDocument(project, document).size)
+
+        reviewMarks().switchToBranch("feature-b")
+
+        assertEquals(listOf(Triple(MarkState.TO_REVIEW, lineThreeStart, lineThreeEnd)), marks(document))
+    }
+
+    fun `test marks saved before branches were tracked belong to the first branch seen`() {
+        val document = openDocumentWithLinesTwoToFourReviewed()
+
+        reviewMarks().switchToBranch("main")
+
+        assertEquals(listOf(Triple(MarkState.REVIEWED, lineTwoStart, lineFourEnd)), marks(document))
+    }
+
+    fun `test the marks of other branches are saved with the state`() {
+        val document = openDocumentWithLinesTwoToFourReviewed()
+        reviewMarks().switchToBranch("feature-a")
+        reviewMarks().switchToBranch("feature-b")
+
+        val savedState = reviewMarks().state
+
+        assertEquals("feature-b", savedState.branch)
+        assertEquals(listOf("feature-a"), savedState.otherBranches.map { it.branch })
+        assertEquals(1, savedState.otherBranches.single().marks.size)
+        assertEquals(emptyList<Triple<MarkState, Int, Int>>(), marks(document))
+    }
+
     fun `test marking the method around the caret marks the whole method`() {
         val javaText = "class Sample {\n    int total(int a, int b) {\n        int sum = a + b;\n        return sum;\n    }\n}\n"
         myFixture.configureByText("Sample.java", javaText)

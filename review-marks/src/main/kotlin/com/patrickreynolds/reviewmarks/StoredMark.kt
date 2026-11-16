@@ -16,4 +16,14 @@ class ReviewMarksState(
     var notes: MutableList<StoredNote> = mutableListOf(),
     var reviewLog: MutableList<ReviewLogEntry> = mutableListOf(),
     var pullRequest: PullRequestSession? = null,
+    var branch: String = "",
+    var otherBranches: MutableList<StoredBranchMarks> = mutableListOf(),
+)
+
+data class StoredBranchMarks(
+    var branch: String = "",
+    var marks: MutableList<StoredMark> = mutableListOf(),
+    var notes: MutableList<StoredNote> = mutableListOf(),
+    var lastStop: StoredStop? = null,
+    var pullRequest: PullRequestSession? = null,
 )
