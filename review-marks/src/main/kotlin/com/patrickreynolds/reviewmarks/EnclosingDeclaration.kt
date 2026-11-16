@@ -20,7 +20,7 @@ fun findEnclosingDeclarationRange(psiFile: PsiFile, document: Document, caretOff
 private fun spansSeveralLines(document: Document, range: TextRange): Boolean =
     document.getLineNumber(range.startOffset) < document.getLineNumber(range.endOffset)
 
-private fun withLeadingIndentation(documentText: CharSequence, range: TextRange): TextRange {
+fun withLeadingIndentation(documentText: CharSequence, range: TextRange): TextRange {
     var startOffset = range.startOffset
     while (startOffset > 0 && documentText[startOffset - 1].let { it == ' ' || it == '\t' }) {
         startOffset--

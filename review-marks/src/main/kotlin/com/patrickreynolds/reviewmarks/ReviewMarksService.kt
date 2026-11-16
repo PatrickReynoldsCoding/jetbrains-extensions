@@ -24,6 +24,7 @@ import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileManager
+import com.intellij.psi.PsiDocumentManager
 import com.intellij.openapi.wm.WindowManager
 import com.intellij.util.Alarm
 import com.intellij.util.SingleAlarm
@@ -64,6 +65,9 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         private set
 
     var pullRequest: PullRequestSession? = null
+        private set
+
+    var highlightsHidden: Boolean = false
         private set
 
     private val agentNotesFile = AgentNotesFile(project)
@@ -116,8 +120,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             showStoredMarks(document, file)
 
             val rangesAlreadyMarked = ReviewedMarkHighlighters.inDocument(project, document).map { it.range }
-            val unmarkedChangedRanges = changedLines
-                .mapNotNull { textRangeOfLines(document.text, it) }
+            val unmarkedChangedRanges = rangesToMarkForChangedLines(document, file, changedLines)
                 .flatMap { withoutRanges(it, rangesAlreadyMarked) }
                 .mapNotNull { trimmedToCode(document.text, it) }
             unmarkedChangedRanges.forEach { ReviewedMarkHighlighters.add(project, document, it, MarkState.TO_REVIEW) }
@@ -126,6 +129,18 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         }
         afterChangesUpdate.request()
         return markedFileCount
+    }
+
+    private fun rangesToMarkForChangedLines(document: Document, file: VirtualFile, changedLines: List<LineRange>): List<TextRange> {
+        PsiDocumentManager.getInstance(project).commitDocument(document)
+        val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(document)
+        return rangesToMarkForChangedLines(
+            documentText = document.text,
+            changedLines = changedLines,
+            functionRangeAtLine = { lineNumber -> psiFile?.let { outermostFunctionRangeAtLine(it, document, lineNumber) } },
+            isImportLine = { lineNumber -> psiFile?.let { isImportLineOf(it, document, lineNumber) } ?: false },
+            skipImports = service<ReviewMarksSettings>().state.skipImportsInGitMarks,
+        )
     }
 
     fun marksContaining(document: Document, offset: Int): List<ReviewMark> =
@@ -183,6 +198,16 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         foldMode = foldModeOn
         refoldOpenDocuments()
         afterChangesUpdate.request()
+    }
+
+    fun changeHighlightsHidden(hidden: Boolean) {
+        highlightsHidden = hidden
+        FileEditorManager.getInstance(project).openFiles.forEach { openFile ->
+            val openDocument = FileDocumentManager.getInstance().getCachedDocument(openFile) ?: return@forEach
+            ReviewedMarkHighlighters.restyle(project, openDocument)
+            showFocusOf(openDocument, openFile)
+        }
+        announceReviewStateChanged()
     }
 
     fun goToLastStop(): Boolean {
@@ -254,6 +279,22 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         storeOpenDocuments()
         rememberForUndo("Removed from focus")
         focusBlocks = focusBlocksWithout(focusBlocks, focusBlockIds)
+        focusChanged()
+    }
+
+    fun markFocusBlocksAsReviewedAndRemoveThem(focusBlockIds: List<String>) {
+        storeOpenDocuments()
+        val idsWithNestedBlocks = focusBlockIds.flatMap { idsOfFocusBlockAndItsDescendants(focusBlocks, it) }.toSet()
+        val rangesToMark = focusBlocks.filter { it.id in idsWithNestedBlocks }.mapNotNull { focusBlock ->
+            val file = VirtualFileManager.getInstance().findFileByUrl(focusBlock.fileUrl) ?: return@mapNotNull null
+            val documentText = FileDocumentManager.getInstance().getDocument(file)?.text ?: return@mapNotNull null
+            val blockStart = locateMarkedText(documentText, focusBlock.markedText, focusBlock.startOffset) ?: return@mapNotNull null
+            focusBlock.fileUrl to TextRange(blockStart, blockStart + focusBlock.markedText.length)
+        }
+        if (idsWithNestedBlocks.isEmpty()) return
+        if (rangesToMark.isEmpty()) return removeFromFocus(idsWithNestedBlocks.toList())
+        markBlocksAsReviewed(rangesToMark)
+        focusBlocks = focusBlocksWithout(focusBlocks, idsWithNestedBlocks)
         focusChanged()
     }
 
@@ -656,6 +697,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             branch = activeBranch.orEmpty(),
             otherBranches = marksOfOtherBranches.values.map { it.copy() }.toMutableList(),
             focus = focusBlocks.toMutableList(),
+            highlightsHidden = highlightsHidden,
         )
     }
 
@@ -665,6 +707,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         storedNotesByFileUrl.clear()
         storedNotesByFileUrl.putAll(state.notes.groupBy { it.fileUrl })
         foldMode = state.foldMode
+        highlightsHidden = state.highlightsHidden
         lastStop = state.lastStop
         reviewLog = state.reviewLog.toList()
         pullRequest = state.pullRequest

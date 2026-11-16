@@ -42,6 +42,12 @@
                 description="Mark the selection (or the method or class at the caret) as code to review. It is listed in the To review tab.">
             <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift 7"/>
         </action>
+        <action id="ReviewMarks.AddToFocus"
+                class="com.patrickreynolds.reviewmarks.AddToFocusAction"
+                text="Add Selection to Current Focus"
+                description="Add the selection (or the method or class at the caret) to Current focus. It is highlighted red.">
+            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift 4"/>
+        </action>
         <action id="ReviewMarks.MarkSelectionAsReviewed"
                 icon="AllIcons.Actions.Checked"
                 class="com.patrickreynolds.reviewmarks.MarkSelectionAsReviewedAction"
@@ -143,6 +149,7 @@
 
         <group id="ReviewMarks.Menu" text="Review Marks" popup="true">
             <reference ref="ReviewMarks.MarkAsToReview"/>
+            <reference ref="ReviewMarks.AddToFocus"/>
             <reference ref="ReviewMarks.MarkAndGoToNext"/>
             <reference ref="ReviewMarks.MarkSelectionAsReviewed"/>
             <reference ref="ReviewMarks.MarkEnclosingDeclarationAsReviewed"/>

@@ -19,6 +19,7 @@ class ReviewMarksState(
     var branch: String = "",
     var otherBranches: MutableList<StoredBranchMarks> = mutableListOf(),
     var focus: MutableList<StoredFocusBlock> = mutableListOf(),
+    var highlightsHidden: Boolean = false,
 )
 
 data class StoredBranchMarks(

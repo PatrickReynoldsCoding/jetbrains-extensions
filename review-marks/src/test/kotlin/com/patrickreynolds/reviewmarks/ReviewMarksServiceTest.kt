@@ -26,6 +26,7 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
     override fun setUp() {
         super.setUp()
         reviewMarks().loadState(ReviewMarksState())
+        service<ReviewMarksSettings>().loadState(ReviewMarksSettingsState())
     }
 
     private fun openDocumentWithLinesTwoToFourReviewed(): Document {
@@ -806,6 +807,87 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
 
         val shift = "new first line\n".length
         assertEquals(listOf(TextRange(lineThreeStart + shift, lineThreeEnd + shift)), focusHighlightRanges(document))
+    }
+
+    private val javaTextWithTwoMethods =
+        "import java.util.List;\nclass Sample {\n    int total(int a, int b) {\n        return a + b;\n    }\n    int other() {\n        return 1;\n    }\n}\n"
+    private val totalMethodRange = TextRange(javaTextWithTwoMethods.indexOf("int total"), javaTextWithTwoMethods.indexOf("    }\n") + "    }".length)
+    private val otherMethodRange = TextRange(javaTextWithTwoMethods.indexOf("int other"), javaTextWithTwoMethods.lastIndexOf("    }\n") + "    }".length)
+    private val importLineRange = TextRange(0, "import java.util.List;".length)
+    private val importAndBothMethodLines = listOf(LineRange(0, 0), LineRange(3, 3), LineRange(6, 6))
+
+    fun `test each changed function gets one mark covering the whole function`() {
+        val file = myFixture.configureByText("Sample.java", javaTextWithTwoMethods).virtualFile
+
+        reviewMarks().markChangedLinesToReview(mapOf(file to importAndBothMethodLines))
+
+        assertEquals(
+            listOf(importLineRange, totalMethodRange, otherMethodRange),
+            marks(myFixture.editor.document).map { TextRange(it.second, it.third) },
+        )
+    }
+
+    fun `test changed import lines are not marked when the setting skips imports`() {
+        service<ReviewMarksSettings>().state.skipImportsInGitMarks = true
+        val file = myFixture.configureByText("Sample.java", javaTextWithTwoMethods).virtualFile
+
+        reviewMarks().markChangedLinesToReview(mapOf(file to importAndBothMethodLines))
+
+        assertEquals(
+            listOf(totalMethodRange, otherMethodRange),
+            marks(myFixture.editor.document).map { TextRange(it.second, it.third) },
+        )
+    }
+
+    fun `test marking a focus block as reviewed turns it green, takes it out of focus and undo reverts both`() {
+        val document = openDocumentWithLinesTwoToFourToReview()
+        val lineTwoRange = TextRange(lineTwoStart, lineTwoStart + "line two".length)
+        reviewMarks().addToFocus(listOf(myFixture.file.virtualFile.url to lineTwoRange))
+
+        reviewMarks().markFocusBlocksAsReviewedAndRemoveThem(listOf(reviewMarks().focusRows().single().id))
+
+        assertEquals(emptyList<TextRange>(), focusHighlightRanges(document))
+        assertEquals(MarkState.REVIEWED, marks(document).first { it.second == lineTwoStart }.first)
+        reviewMarks().undoLastClear()
+        assertEquals(listOf(lineTwoRange), focusHighlightRanges(document))
+        assertEquals(MarkState.TO_REVIEW, marks(document).first { it.second == lineTwoStart }.first)
+    }
+
+    private fun markBackgroundColors(document: Document) =
+        ReviewedMarkHighlighters.inDocument(project, document).map { it.highlighter.getTextAttributes(null)?.backgroundColor }
+
+    fun `test hiding highlights keeps the marks and the focus blocks but removes their colours`() {
+        val document = openDocumentWithLinesTwoToFourToReview()
+        reviewMarks().addToFocus(listOf(myFixture.file.virtualFile.url to TextRange(lineTwoStart, lineTwoStart + "line two".length)))
+
+        reviewMarks().changeHighlightsHidden(true)
+
+        assertEquals(1, marks(document).size)
+        assertEquals(listOf<java.awt.Color?>(null), markBackgroundColors(document))
+        assertEquals(1, focusHighlightRanges(document).size)
+        assertNull(FocusHighlighters.inDocument(project, document).single().highlighter.getTextAttributes(null)?.backgroundColor)
+    }
+
+    fun `test a mark made while highlights are hidden is hidden too and showing them again restores the colour`() {
+        val document = openDocumentWithLinesTwoToFourToReview()
+        reviewMarks().changeHighlightsHidden(true)
+        reviewMarks().markRangeAsReviewed(document, TextRange(lineThreeStart, lineThreeEnd))
+
+        assertTrue(markBackgroundColors(document).all { it == null })
+
+        reviewMarks().changeHighlightsHidden(false)
+
+        assertTrue(markBackgroundColors(document).all { it != null })
+    }
+
+    fun `test highlights stay hidden after the state is saved and loaded`() {
+        reviewMarks().changeHighlightsHidden(true)
+
+        val savedState = reviewMarks().state
+        reviewMarks().changeHighlightsHidden(false)
+        reviewMarks().loadState(savedState)
+
+        assertTrue(reviewMarks().highlightsHidden)
     }
 
     fun `test each branch keeps its own marks and notes`() {

@@ -10,6 +10,7 @@ class ReviewMarksSettingsState {
     var breakMinutes: Int = 5
     var startBreaksAutomatically: Boolean = false
     var defaultBaseBranch: String = "main"
+    var skipImportsInGitMarks: Boolean = false
     var notesFloatByDefault: Boolean = true
     var syncSidebarWithEditor: Boolean = true
     var gitHubHostAliases: String = "github-personal=github.com"

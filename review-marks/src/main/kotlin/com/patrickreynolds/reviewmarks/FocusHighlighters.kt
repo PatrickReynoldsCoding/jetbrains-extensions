@@ -1,5 +1,6 @@
 package com.patrickreynolds.reviewmarks
 
+import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.impl.DocumentMarkupModel
 import com.intellij.openapi.editor.markup.HighlighterLayer
@@ -23,8 +24,11 @@ object FocusHighlighters {
 
     fun add(project: Project, document: Document, range: TextRange, focusBlockId: String) {
         val markupModel = DocumentMarkupModel.forDocument(document, project, true)
-        val attributes = TextAttributes(null, FOCUS_BACKGROUND, null, null, Font.PLAIN)
-        attributes.errorStripeColor = FOCUS_ACCENT
+        val attributes = if (project.service<ReviewMarksService>().highlightsHidden) {
+            TextAttributes()
+        } else {
+            TextAttributes(null, FOCUS_BACKGROUND, null, null, Font.PLAIN).also { it.errorStripeColor = FOCUS_ACCENT }
+        }
         val highlighter = markupModel.addRangeHighlighter(
             range.startOffset,
             range.endOffset,

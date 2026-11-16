@@ -94,6 +94,11 @@ class ReviewMarksConfigurable : BoundConfigurable("Review Marks") {
                     textField().bindText(settingsState::defaultBaseBranch)
                         .comment("Used by Mark All Branch Changes to Review.")
                 }
+                row {
+                    checkBox("Do not mark import lines")
+                        .bindSelected(settingsState::skipImportsInGitMarks)
+                        .comment("Import lines that changed are left out of the marks from git and PR reviews. Each changed function is always one mark.")
+                }
                 row("GitHub host aliases:") {
                     textField().bindText(settingsState::gitHubHostAliases)
                         .comment("For SSH host aliases in your remotes, as alias=host, split by commas. For example github-personal=github.com.")

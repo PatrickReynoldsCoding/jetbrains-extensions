@@ -83,6 +83,7 @@ class ReviewMarksPanel(
     private val reviewMarks = project.service<ReviewMarksService>()
 
     private val foldCheckBox = JBCheckBox("Fold reviewed")
+    private val hideHighlightsCheckBox = JBCheckBox("Hide highlights")
     private val pullRequestLabel = JBLabel()
     private val pullRequestRow = createPullRequestRow()
     private val fileNameLabel = JBLabel()
@@ -126,6 +127,7 @@ class ReviewMarksPanel(
         refreshingFromState = true
         try {
             foldCheckBox.isSelected = reviewMarks.foldMode
+            hideHighlightsCheckBox.isSelected = reviewMarks.highlightsHidden
             refreshPullRequestBanner()
             refreshPomodoro()
             refreshProgress()
@@ -147,6 +149,7 @@ class ReviewMarksPanel(
             topPanel,
             "Mark",
             actionButton("To review", DotIcon(TO_REVIEW_ACCENT), "ReviewMarks.MarkAsToReview"),
+            actionButton("Focus", DotIcon(FOCUS_ACCENT), "ReviewMarks.AddToFocus"),
             actionButton("Reviewed", DotIcon(REVIEWED_ACCENT), "ReviewMarks.MarkSelectionAsReviewed"),
             actionButton("Reviewed & next", DotIcon(REVIEWED_ACCENT), "ReviewMarks.MarkAndGoToNext"),
             actionButton("Clear mark", AllIcons.Actions.Close, "ReviewMarks.ClearReviewedMark"),
@@ -166,7 +169,7 @@ class ReviewMarksPanel(
         )
         addSection(topPanel, "Review from git", fromGitButton())
         topPanel.add(pullRequestRow)
-        topPanel.add(checkBoxRow(foldCheckBox))
+        topPanel.add(checkBoxRow(foldCheckBox, hideHighlightsCheckBox))
         topPanel.add(fileNameLabel)
         topPanel.add(progressLabel)
         topPanel.add(progressBar)
@@ -176,6 +179,8 @@ class ReviewMarksPanel(
         topPanel.components.forEach { (it as JComponent).alignmentX = Component.LEFT_ALIGNMENT }
 
         foldCheckBox.addActionListener { if (!refreshingFromState) reviewMarks.changeFoldMode(foldCheckBox.isSelected) }
+        hideHighlightsCheckBox.toolTipText = "Hide the colours of the marks and of Current focus in the editor. The marks are kept and the sidebar still lists them."
+        hideHighlightsCheckBox.addActionListener { if (!refreshingFromState) reviewMarks.changeHighlightsHidden(hideHighlightsCheckBox.isSelected) }
         return topPanel
     }
 
@@ -367,14 +372,15 @@ class ReviewMarksPanel(
         val moveDownButton = focusButton("Down", AllIcons.Actions.MoveDown, "Move the selected blocks down among the blocks next to them.") { reviewMarks.moveFocusBlocksDown(selectedFocusBlockIds()) }
         val nestButton = focusButton("Nest", AllIcons.Actions.Forward, "Put the selected blocks under the block above them. You can also drag a block onto another.") { reviewMarks.indentFocusBlocks(selectedFocusBlockIds()) }
         val unnestButton = focusButton("Un-nest", AllIcons.Actions.Back, "Move the selected blocks out of the block they are under.") { reviewMarks.outdentFocusBlocks(selectedFocusBlockIds()) }
+        val markReviewedButton = focusButton("Reviewed", DotIcon(REVIEWED_ACCENT), "Mark the selected blocks, and the blocks under them, as reviewed and take them out of focus. Undo brings them back.") { reviewMarks.markFocusBlocksAsReviewedAndRemoveThem(selectedFocusBlockIds()) }
         val removeButton = focusButton(REMOVE_LABEL, AllIcons.Actions.Close, "Remove the selected blocks, and the blocks under them, from focus. Undo brings them back.") { removeSelectedFromFocus() }
         val clearAllButton = focusButton("Clear all", null, "Remove every block from focus. Undo brings them back.") { reviewMarks.clearFocus() }
-        val selectionButtons = listOf(moveUpButton, moveDownButton, nestButton, unnestButton, removeButton)
+        val selectionButtons = listOf(markReviewedButton, moveUpButton, moveDownButton, nestButton, unnestButton, removeButton)
         focusTree.addTreeSelectionListener { selectionButtons.forEach { it.isEnabled = focusTree.selectionCount > 0 } }
         selectionButtons.forEach { it.isEnabled = false }
 
-        val buttons = JBPanel<JBPanel<*>>(WrapLayout(FlowLayout.RIGHT, 4, 0))
-        (selectionButtons + clearAllButton).forEach { buttons.add(it) }
+        val buttons = JBPanel<JBPanel<*>>(WrapLayout(FlowLayout.LEFT, 2, 0))
+        (selectionButtons + clearAllButton).forEach { buttons.add(compact(it)) }
         val headingRow = JBPanel<JBPanel<*>>(BorderLayout())
         headingRow.border = JBUI.Borders.empty(2, 6)
         headingRow.add(focusHeadingLabel, BorderLayout.NORTH)
@@ -393,6 +399,13 @@ class ReviewMarksPanel(
             change()
             refresh()
         }
+        return button
+    }
+
+    private fun compact(button: JButton): JButton {
+        button.font = JBUI.Fonts.smallFont()
+        button.margin = JBUI.insets(0, 2)
+        button.iconTextGap = JBUI.scale(2)
         return button
     }
 

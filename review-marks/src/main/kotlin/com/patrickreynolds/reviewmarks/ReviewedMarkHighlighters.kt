@@ -1,5 +1,6 @@
 package com.patrickreynolds.reviewmarks
 
+import com.intellij.openapi.components.service
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.impl.DocumentMarkupModel
 import com.intellij.openapi.editor.markup.HighlighterLayer
@@ -41,8 +42,13 @@ object ReviewedMarkHighlighters {
 
     fun add(project: Project, document: Document, range: TextRange, state: MarkState) {
         val markupModel = DocumentMarkupModel.forDocument(document, project, true)
-        val attributes = TextAttributes(null, BACKGROUND_BY_STATE.getValue(state), null, null, Font.PLAIN)
-        attributes.errorStripeColor = STRIPE_BY_STATE.getValue(state)
+        val attributes = if (project.service<ReviewMarksService>().highlightsHidden) {
+            TextAttributes()
+        } else {
+            TextAttributes(null, BACKGROUND_BY_STATE.getValue(state), null, null, Font.PLAIN).also {
+                it.errorStripeColor = STRIPE_BY_STATE.getValue(state)
+            }
+        }
         val highlighter = markupModel.addRangeHighlighter(
             range.startOffset,
             range.endOffset,
@@ -64,6 +70,13 @@ object ReviewedMarkHighlighters {
             val state = highlighter.getUserData(MARK_STATE)
             if (state != null && highlighter.isValid) ReviewMark(highlighter, state) else null
         }
+    }
+
+    fun restyle(project: Project, document: Document) {
+        val marks = inDocument(project, document)
+        val rangesAndStates = marks.map { it.range to it.state }
+        remove(project, document, marks)
+        rangesAndStates.forEach { (range, state) -> add(project, document, range, state) }
     }
 
     fun remove(project: Project, document: Document, marks: List<ReviewMark>) {
