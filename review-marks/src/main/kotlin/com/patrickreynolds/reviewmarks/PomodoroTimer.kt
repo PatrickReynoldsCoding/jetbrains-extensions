@@ -89,7 +89,7 @@ class PomodoroTimer(private val project: Project) : PersistentStateComponent<Pom
         pomodoroState = step.stateAfterStep
         session = sessionAfterStep(session, stateBeforeStep, step.stateAfterStep, nowMillis)
         step.message?.let { message ->
-            ApplicationManager.getApplication().invokeLater({ showReviewMarksMessage(project, message, soundName = null) }, project.disposed)
+            ApplicationManager.getApplication().invokeLater({ showReviewMarksMessage(project, message, soundName = pomodoroSoundName()) }, project.disposed)
             announceChange()
         }
     }

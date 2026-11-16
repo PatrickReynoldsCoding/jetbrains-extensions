@@ -1,6 +1,7 @@
 package com.patrickreynolds.reviewmarks
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class MacNotificationTest {
@@ -9,24 +10,21 @@ class MacNotificationTest {
     fun `builds an osascript command that shows the message with the title`() {
         assertEquals(
             listOf("osascript", "-e", "display notification \"Break time\" with title \"Review Marks\""),
-            macNotificationCommand(title = "Review Marks", message = "Break time", soundName = null),
+            macNotificationCommand(title = "Review Marks", message = "Break time"),
         )
     }
 
     @Test
-    fun `adds the sound name to the notification when one is given`() {
+    fun `plays a named system sound with afplay`() {
         assertEquals(
-            listOf("osascript", "-e", "display notification \"Keep focus\" with title \"Review Marks\" sound name \"Glass\""),
-            macNotificationCommand(title = "Review Marks", message = "Keep focus", soundName = "Glass"),
+            listOf("afplay", "/System/Library/Sounds/Basso.aiff"),
+            macSoundCommand(soundName = "Basso"),
         )
     }
 
     @Test
-    fun `escapes quotes in the sound name`() {
-        assertEquals(
-            "display notification \"x\" with title \"t\" sound name \"a\\\"b\"",
-            macNotificationCommand(title = "t", message = "x", soundName = "a\"b")[2],
-        )
+    fun `plays no sound for a name that is not a system alert sound`() {
+        assertNull(macSoundCommand(soundName = "../../tmp/evil"))
     }
 
     @Test

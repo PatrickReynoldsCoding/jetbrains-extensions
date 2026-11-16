@@ -30,6 +30,8 @@ fun shouldSendFocusAlert(
 fun focusAlertSoundName(soundEnabled: Boolean, soundName: String): String? =
     soundName.takeIf { soundEnabled }
 
+fun pomodoroSoundName(): String = service<ReviewMarksSettings>().state.focusAlertSoundName
+
 fun isReviewing(pomodoroState: PomodoroState?): Boolean =
     pomodoroState is PomodoroState.Running && pomodoroState.phase == PomodoroPhase.WORKING
 

@@ -401,7 +401,7 @@ class ReviewMarksPanel(
         startReviewingButton.addActionListener { pomodoroTimer.start(System.currentTimeMillis()) }
         pauseOrResumeButton.addActionListener { pomodoroTimer.pauseOrResume(System.currentTimeMillis()) }
         finishButton.addActionListener {
-            pomodoroTimer.finish(System.currentTimeMillis())?.let { summary -> showReviewMarksMessage(project, summary, soundName = null) }
+            pomodoroTimer.finish(System.currentTimeMillis())?.let { summary -> showReviewMarksMessage(project, summary, soundName = pomodoroSoundName()) }
         }
         startBreakButton.addActionListener { pomodoroTimer.startBreak(System.currentTimeMillis()) }
         finishBreakButton.addActionListener { pomodoroTimer.finishBreak(System.currentTimeMillis()) }
