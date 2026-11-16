@@ -2,6 +2,8 @@ package com.patrickreynolds.reviewmarks
 
 import com.intellij.openapi.util.TextRange
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BlockRowsTest {
@@ -56,5 +58,23 @@ class BlockRowsTest {
     @Test
     fun `nothing marked gives no blocks to review`() {
         assertEquals(emptyList<BlockRow>(), toReviewBlockRows(documentText, emptyList(), emptyList()))
+    }
+
+    @Test
+    fun `a mark that spills into the next line belongs to the block of the whole lines it covers`() {
+        val documentText = "first line\nsecond line\nthird line\n"
+        val markEndingInsideThirdLine = TextRange(0, documentText.indexOf("third") + 3)
+        val blockOfFirstTwoLines = TextRange(0, documentText.indexOf("second line") + "second line".length)
+
+        assertTrue(markBelongsToBlock(documentText, markEndingInsideThirdLine, blockOfFirstTwoLines))
+    }
+
+    @Test
+    fun `a mark does not belong to a block of other lines`() {
+        val documentText = "first line\nsecond line\nthird line\n"
+        val markOnFirstLine = TextRange(0, "first line".length)
+        val blockOfThirdLine = TextRange(documentText.indexOf("third"), documentText.indexOf("third") + "third line".length)
+
+        assertFalse(markBelongsToBlock(documentText, markOnFirstLine, blockOfThirdLine))
     }
 }

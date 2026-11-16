@@ -28,6 +28,10 @@ fun blockRows(kind: BlockKind, documentText: String, markedRanges: List<TextRang
     }
 }
 
+fun markBelongsToBlock(documentText: String, markRange: TextRange, blockRange: TextRange): Boolean =
+    blockRows(BlockKind.TO_REVIEW, documentText, listOf(markRange))
+        .any { blockRange.contains(TextRange(it.startOffset, it.endOffset)) }
+
 fun toReviewBlockRows(documentText: String, toReviewRanges: List<TextRange>, changedRanges: List<TextRange>): List<BlockRow> {
     val changedRows = blockRows(BlockKind.CHANGED, documentText, changedRanges)
     val toReviewRows = blockRows(BlockKind.TO_REVIEW, documentText, toReviewRanges)
