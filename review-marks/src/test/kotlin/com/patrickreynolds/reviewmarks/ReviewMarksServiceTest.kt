@@ -890,6 +890,22 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
         assertTrue(reviewMarks().highlightsHidden)
     }
 
+    fun `test several focus blocks dropped on a block are all nested under it in their order`() {
+        myFixture.configureByText("Example.txt", documentText)
+        val fileUrl = myFixture.file.virtualFile.url
+        reviewMarks().addToFocus(listOf(fileUrl to TextRange(lineTwoStart, lineTwoStart + "line two".length)))
+        reviewMarks().addToFocus(listOf(fileUrl to TextRange(lineThreeStart, lineThreeEnd)))
+        reviewMarks().addToFocus(listOf(fileUrl to TextRange(lineFourEnd - "line four".length, lineFourEnd)))
+        val (lineTwoId, lineThreeId, lineFourId) = reviewMarks().focusRows().map { it.id }
+
+        reviewMarks().moveFocusBlocks(listOf(lineThreeId, lineFourId), lineTwoId, AFTER_THE_LAST_SIBLING)
+
+        assertEquals(
+            listOf("line two" to "", "line three" to lineTwoId, "line four" to lineTwoId),
+            nestedFocusIds(),
+        )
+    }
+
     fun `test each branch keeps its own marks and notes`() {
         val document = openDocumentWithLinesTwoToFourReviewed()
         addNoteOnLine(document, lineThreeStart, plainNote)

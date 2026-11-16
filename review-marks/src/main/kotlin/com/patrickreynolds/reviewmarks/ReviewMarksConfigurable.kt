@@ -89,6 +89,13 @@ class ReviewMarksConfigurable : BoundConfigurable("Review Marks") {
                         .comment("Tick the tabs to show and use the arrows to move them. You can also right-click a tab in the sidebar.")
                 }
             }
+            group("Current focus") {
+                row {
+                    checkBox("Show the Up, Down, Nest and Un-nest buttons")
+                        .bindSelected(settingsState::showFocusMoveButtons)
+                        .comment("Off: move blocks by dragging them in the Current focus tab.")
+                }
+            }
             group("Review from git") {
                 row("Branch to compare with:") {
                     textField().bindText(settingsState::defaultBaseBranch)

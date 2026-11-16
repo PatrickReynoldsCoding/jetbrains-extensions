@@ -11,6 +11,7 @@ class ReviewMarksSettingsState {
     var startBreaksAutomatically: Boolean = false
     var defaultBaseBranch: String = "main"
     var skipImportsInGitMarks: Boolean = false
+    var showFocusMoveButtons: Boolean = true
     var notesFloatByDefault: Boolean = true
     var syncSidebarWithEditor: Boolean = true
     var gitHubHostAliases: String = "github-personal=github.com"

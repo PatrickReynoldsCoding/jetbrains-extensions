@@ -309,7 +309,8 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         val indexedBlockIds = movedBlockIds.withIndex()
         changeFocusBlocks("Moved focus blocks", movedBlockIds) { blocksSoFar, movedBlockId ->
             val indexOfMovedBlock = indexedBlockIds.first { it.value == movedBlockId }.index
-            focusBlocksAfterMoving(blocksSoFar, movedBlockId, newParentId, indexAmongNewSiblings + indexOfMovedBlock)
+            val indexOfThisBlock = if (indexAmongNewSiblings == AFTER_THE_LAST_SIBLING) AFTER_THE_LAST_SIBLING else indexAmongNewSiblings + indexOfMovedBlock
+            focusBlocksAfterMoving(blocksSoFar, movedBlockId, newParentId, indexOfThisBlock)
         }
     }
 

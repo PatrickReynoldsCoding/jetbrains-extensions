@@ -109,6 +109,7 @@ class ReviewMarksPanel(
     private val collapsedNoteKinds = mutableSetOf<NoteKind>()
     private val focusTree = createTree(FocusTreeCellRenderer())
     private val focusHeadingLabel = JBLabel()
+    private val focusMoveButtons = mutableListOf<JButton>()
     private val tabContents = mutableMapOf<SidebarTab, JComponent>()
     private var shownTabs: List<SidebarTab> = emptyList()
     private var rebuildingTabs = false
@@ -134,6 +135,7 @@ class ReviewMarksPanel(
             refreshAllMarkedCode()
             refreshUndo()
             showSidebarTabs()
+            focusMoveButtons.forEach { it.isVisible = service<ReviewMarksSettings>().state.showFocusMoveButtons }
             refreshTabTitles()
             refreshSelectedTab()
         } finally {
@@ -375,6 +377,9 @@ class ReviewMarksPanel(
         val markReviewedButton = focusButton("Reviewed", DotIcon(REVIEWED_ACCENT), "Mark the selected blocks, and the blocks under them, as reviewed and take them out of focus. Undo brings them back.") { reviewMarks.markFocusBlocksAsReviewedAndRemoveThem(selectedFocusBlockIds()) }
         val removeButton = focusButton(REMOVE_LABEL, AllIcons.Actions.Close, "Remove the selected blocks, and the blocks under them, from focus. Undo brings them back.") { removeSelectedFromFocus() }
         val clearAllButton = focusButton("Clear all", null, "Remove every block from focus. Undo brings them back.") { reviewMarks.clearFocus() }
+        focusMoveButtons.addAll(listOf(moveUpButton, moveDownButton, nestButton, unnestButton))
+        focusMoveButtons.forEach { onRightClick(it) { event -> showFocusMoveButtonsMenu(it, event) } }
+        onRightClick(focusTree) { event -> showFocusMoveButtonsMenu(focusTree, event) }
         val selectionButtons = listOf(markReviewedButton, moveUpButton, moveDownButton, nestButton, unnestButton, removeButton)
         focusTree.addTreeSelectionListener { selectionButtons.forEach { it.isEnabled = focusTree.selectionCount > 0 } }
         selectionButtons.forEach { it.isEnabled = false }
@@ -400,6 +405,23 @@ class ReviewMarksPanel(
             refresh()
         }
         return button
+    }
+
+    fun focusMoveButtonsMenuItem(): JMenuItem {
+        val settingsState = service<ReviewMarksSettings>().state
+        val buttonsShown = settingsState.showFocusMoveButtons
+        val item = JMenuItem(if (buttonsShown) "Hide Up, Down, Nest and Un-nest buttons" else "Show Up, Down, Nest and Un-nest buttons")
+        item.addActionListener {
+            settingsState.showFocusMoveButtons = !buttonsShown
+            refresh()
+        }
+        return item
+    }
+
+    private fun showFocusMoveButtonsMenu(clickedComponent: Component, event: MouseEvent) {
+        val menu = JBPopupMenu()
+        menu.add(focusMoveButtonsMenuItem())
+        menu.show(clickedComponent, event.x, event.y)
     }
 
     private fun compact(button: JButton): JButton {
@@ -528,8 +550,8 @@ class ReviewMarksPanel(
         menu.show(tree, event.x, event.y)
     }
 
-    private fun onRightClick(tree: Tree, showMenu: (MouseEvent) -> Unit) {
-        tree.addMouseListener(object : MouseAdapter() {
+    private fun onRightClick(component: Component, showMenu: (MouseEvent) -> Unit) {
+        component.addMouseListener(object : MouseAdapter() {
             override fun mousePressed(event: MouseEvent) {
                 if (event.isPopupTrigger) showMenu(event)
             }

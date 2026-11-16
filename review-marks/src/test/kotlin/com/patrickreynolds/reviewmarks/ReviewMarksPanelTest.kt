@@ -447,4 +447,28 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
 
     private fun shownTabIndex(panel: ReviewMarksPanel, titleStart: String) =
         tabTitles(panel).indexOfFirst { it.startsWith(titleStart) }
+
+    fun `test the setting hides the up, down, nest and un-nest buttons of the focus tab`() {
+        service<ReviewMarksSettings>().state.showFocusMoveButtons = false
+        val panel = ReviewMarksPanel(project, testRootDisposable)
+
+        val visibleLabels = buttonsOf(panel).filter { it.isVisible }.map { it.text }
+
+        assertTrue(visibleLabels.containsAll(listOf("Reviewed", "Remove", "Clear all")))
+        assertTrue(listOf("Up", "Down", "Nest", "Un-nest").none { it in visibleLabels })
+    }
+
+    fun `test the right click menu hides the four move buttons and then offers to show them again`() {
+        val panel = ReviewMarksPanel(project, testRootDisposable)
+
+        panel.focusMoveButtonsMenuItem().doClick()
+
+        assertFalse(service<ReviewMarksSettings>().state.showFocusMoveButtons)
+        assertTrue(buttonsOf(panel).filter { it.text in listOf("Up", "Down", "Nest", "Un-nest") }.none { it.isVisible })
+        assertEquals("Show Up, Down, Nest and Un-nest buttons", panel.focusMoveButtonsMenuItem().text)
+
+        panel.focusMoveButtonsMenuItem().doClick()
+
+        assertTrue(buttonsOf(panel).filter { it.text in listOf("Up", "Down", "Nest", "Un-nest") }.all { it.isVisible })
+    }
 }

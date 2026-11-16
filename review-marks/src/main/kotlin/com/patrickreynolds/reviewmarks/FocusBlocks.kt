@@ -4,6 +4,8 @@ import com.intellij.util.xmlb.annotations.Tag
 
 const val TOP_LEVEL_FOCUS_PARENT_ID = ""
 
+const val AFTER_THE_LAST_SIBLING = Int.MAX_VALUE
+
 data class StoredFocusBlock(
     var id: String = "",
     var parentId: String = TOP_LEVEL_FOCUS_PARENT_ID,

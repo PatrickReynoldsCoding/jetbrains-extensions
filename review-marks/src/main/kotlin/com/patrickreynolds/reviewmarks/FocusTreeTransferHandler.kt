@@ -1,5 +1,6 @@
 package com.patrickreynolds.reviewmarks
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.ui.treeStructure.Tree
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.StringSelection
@@ -10,8 +11,6 @@ import javax.swing.TransferHandler
 import javax.swing.tree.DefaultMutableTreeNode
 
 private const val ID_SEPARATOR = "\n"
-
-private const val AT_THE_END_OF_THE_SIBLINGS = Int.MAX_VALUE
 
 private const val DROPPED_ON_A_BLOCK = -1
 
@@ -40,12 +39,13 @@ class FocusTreeTransferHandler(
         val movedBlockIds = (support.transferable.getTransferData(DataFlavor.stringFlavor) as String).split(ID_SEPARATOR)
         val dropParentNode = dropLocation.path?.lastPathComponent as? DefaultMutableTreeNode ?: focusTree.model.root as DefaultMutableTreeNode
         val newParentId = (dropParentNode.userObject as? FocusRow)?.id ?: TOP_LEVEL_FOCUS_PARENT_ID
-        moveFocusBlocks(movedBlockIds, newParentId, indexAmongSiblings(dropLocation, dropParentNode, movedBlockIds))
+        val indexAmongNewSiblings = indexAmongSiblings(dropLocation, dropParentNode, movedBlockIds)
+        ApplicationManager.getApplication().invokeLater { moveFocusBlocks(movedBlockIds, newParentId, indexAmongNewSiblings) }
         return true
     }
 
     private fun indexAmongSiblings(dropLocation: JTree.DropLocation, dropParentNode: DefaultMutableTreeNode, movedBlockIds: List<String>): Int {
-        if (dropLocation.childIndex == DROPPED_ON_A_BLOCK) return AT_THE_END_OF_THE_SIBLINGS
+        if (dropLocation.childIndex == DROPPED_ON_A_BLOCK) return AFTER_THE_LAST_SIBLING
         val movedBlocksBeforeDropPlace = (0 until dropLocation.childIndex).count { childIndex ->
             val childRow = (dropParentNode.getChildAt(childIndex) as DefaultMutableTreeNode).userObject as? FocusRow
             childRow?.id in movedBlockIds
