@@ -8,12 +8,15 @@ import com.intellij.openapi.ui.Messages
 
 private const val DIALOG_TITLE = "Mark All Branch Changes"
 
+fun markBranchChangesActionText(baseBranch: String): String = "Mark All Branch Changes to Review (vs $baseBranch)"
+
 class MarkBranchChangesAction : AnAction() {
 
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
 
     override fun update(event: AnActionEvent) {
         event.presentation.isEnabledAndVisible = event.project != null
+        event.presentation.text = markBranchChangesActionText(service<ReviewMarksSettings>().state.defaultBaseBranch)
     }
 
     override fun actionPerformed(event: AnActionEvent) {
