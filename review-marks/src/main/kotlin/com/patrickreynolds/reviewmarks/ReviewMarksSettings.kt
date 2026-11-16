@@ -18,6 +18,8 @@ class ReviewMarksSettingsState {
     var focusAlertCooldownSeconds: Int = DEFAULT_FOCUS_ALERT_COOLDOWN_SECONDS
     var focusAlertSoundEnabled: Boolean = false
     var focusAlertSoundName: String = DEFAULT_FOCUS_ALERT_SOUND_NAME
+    var sidebarTabOrder: MutableList<String> = DEFAULT_SIDEBAR_TAB_ORDER.toMutableList()
+    var hiddenSidebarTabs: MutableList<String> = mutableListOf()
 
     fun pomodoroLengths() = PomodoroLengths(workMinutes, breakMinutes)
 }

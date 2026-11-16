@@ -30,6 +30,7 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
     override fun setUp() {
         super.setUp()
         reviewMarks().loadState(ReviewMarksState())
+        service<ReviewMarksSettings>().loadState(ReviewMarksSettingsState())
     }
 
     private fun openPanelWithLinesTwoToFourToReview(): ReviewMarksPanel {
@@ -60,14 +61,14 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
         tree.selectionPaths = blockPaths.toTypedArray()
     }
 
-    fun `test the panel has the four tabs and counts the notes in the notes tab title`() {
+    fun `test the panel has the five tabs and counts the notes and focus blocks in the titles`() {
         myFixture.configureByText("Example.txt", documentText)
         reviewMarks().addNote(myFixture.editor.document, TextRange(0, "line one".length), NoteDetails("ask Sam", floating = false, kind = NoteKind.PR_COMMENT))
 
         val panel = ReviewMarksPanel(project, testRootDisposable)
 
         val tabTitles = (0 until tabs(panel).tabCount).map { tabs(panel).getTitleAt(it) }
-        assertEquals(listOf("To review", "Reviewed", "Notes (1)", "Today"), tabTitles)
+        assertEquals(listOf("To review", "Reviewed", "Notes (1)", "Current focus (0)", "Today"), tabTitles)
     }
 
     fun `test the to review tab lists only the code marked to review`() {
@@ -251,7 +252,7 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
 
         val menuLabels = panel.blockMenuItems(toReviewTree, BlockTab.TO_REVIEW).map { it.text }
 
-        assertEquals(listOf("Open", "Mark reviewed: 1 block", "Remove: 1 block", "Tick all", "Untick all"), menuLabels)
+        assertEquals(listOf("Open", "Mark reviewed: 1 block", "Remove: 1 block", "Add to focus: 1 block", "Tick all", "Untick all"), menuLabels)
     }
 
     fun `test the notes tab groups the notes under a header for each kind`() {
@@ -388,4 +389,62 @@ class ReviewMarksPanelTest : BasePlatformTestCase() {
             settingsState.syncSidebarWithEditor = true
         }
     }
+
+    private fun tabTitles(panel: ReviewMarksPanel) = (0 until tabs(panel).tabCount).map { tabs(panel).getTitleAt(it) }
+
+    private fun menuItemNamed(panel: ReviewMarksPanel, tab: SidebarTab, label: String) =
+        panel.tabMenuItems(tab).first { it.text == label }
+
+    fun `test hiding a tab from its right click menu removes it from the sidebar`() {
+        val panel = ReviewMarksPanel(project, testRootDisposable)
+
+        menuItemNamed(panel, SidebarTab.TODAY, "Hide this tab").doClick()
+
+        assertEquals(listOf("To review", "Reviewed", "Notes (0)", "Current focus (0)"), tabTitles(panel))
+    }
+
+    fun `test a hidden tab can be shown again from the menu of another tab`() {
+        val panel = ReviewMarksPanel(project, testRootDisposable)
+        menuItemNamed(panel, SidebarTab.TODAY, "Hide this tab").doClick()
+
+        val showMenu = menuItemNamed(panel, SidebarTab.TO_REVIEW, "Show hidden tab") as javax.swing.JMenu
+        showMenu.getItem(0).doClick()
+
+        assertEquals(listOf("To review", "Reviewed", "Notes (0)", "Current focus (0)", "Today"), tabTitles(panel))
+    }
+
+    fun `test a tab moves right and the new order is kept in the settings`() {
+        val panel = ReviewMarksPanel(project, testRootDisposable)
+
+        menuItemNamed(panel, SidebarTab.TO_REVIEW, "Move right").doClick()
+
+        assertEquals(listOf("Reviewed", "To review", "Notes (0)", "Current focus (0)", "Today"), tabTitles(panel))
+        assertEquals(
+            listOf("REVIEWED", "TO_REVIEW", "NOTES", "CURRENT_FOCUS", "TODAY"),
+            service<ReviewMarksSettings>().state.sidebarTabOrder,
+        )
+    }
+
+    fun `test the last visible tab cannot be hidden`() {
+        service<ReviewMarksSettings>().state.hiddenSidebarTabs = mutableListOf("REVIEWED", "NOTES", "CURRENT_FOCUS", "TODAY")
+        val panel = ReviewMarksPanel(project, testRootDisposable)
+
+        assertFalse(menuItemNamed(panel, SidebarTab.TO_REVIEW, "Hide this tab").isEnabled)
+    }
+
+    fun `test adding a block to focus lists it in the current focus tab and highlights it in the editor`() {
+        val panel = openPanelWithLinesTwoToFourToReview()
+        val toReviewTree = blockTrees(panel).first()
+        selectAllBlocks(toReviewTree)
+
+        panel.blockMenuItems(toReviewTree, BlockTab.TO_REVIEW).first { it.text.startsWith("Add to focus") }.doClick()
+
+        tabs(panel).selectedIndex = shownTabIndex(panel, "Current focus")
+        val focusTree = UIUtil.findComponentsOfType(panel, Tree::class.java).first { itemsIn(it).any { item -> item is FocusRow } }
+        assertEquals(listOf("Example.txt"), itemsIn(focusTree).filterIsInstance<FocusRow>().map { it.fileName })
+        assertEquals(1, FocusHighlighters.inDocument(project, myFixture.editor.document).size)
+    }
+
+    private fun shownTabIndex(panel: ReviewMarksPanel, titleStart: String) =
+        tabTitles(panel).indexOfFirst { it.startsWith(titleStart) }
 }

@@ -36,7 +36,14 @@ private const val AFTER_CHANGES_DELAY_MILLISECONDS = 300
 
 private const val MOST_UNDO_STEPS = 20
 
-data class UndoSnapshot(val description: String, val marks: List<StoredMark>, val notes: List<StoredNote>)
+private const val FOCUS_PREVIEW_LENGTH = 40
+
+data class UndoSnapshot(
+    val description: String,
+    val marks: List<StoredMark>,
+    val notes: List<StoredNote>,
+    val focus: List<StoredFocusBlock>,
+)
 
 @Service(Service.Level.PROJECT)
 @State(name = "ReviewMarks", storages = [Storage(StoragePathMacros.WORKSPACE_FILE)])
@@ -66,6 +73,8 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
     private var lastStop: StoredStop? = null
 
     private var activeBranch: String? = null
+
+    private var focusBlocks: List<StoredFocusBlock> = emptyList()
 
     private val marksOfOtherBranches = mutableMapOf<String, StoredBranchMarks>()
 
@@ -230,6 +239,142 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         storeOpenDocumentsAndChangedFiles(blocks.map { it.first })
     }
 
+    fun addToFocus(blocks: List<Pair<String, TextRange>>): Int {
+        storeOpenDocuments()
+        val newFocusBlocks = blocks.mapNotNull { (fileUrl, blockRange) -> newFocusBlockUnlessAlreadyInFocus(fileUrl, blockRange) }
+        if (newFocusBlocks.isEmpty()) return 0
+        rememberForUndo(if (newFocusBlocks.size == 1) "Added a block to focus" else "Added ${newFocusBlocks.size} blocks to focus")
+        focusBlocks = focusBlocks + newFocusBlocks
+        focusChanged()
+        return newFocusBlocks.size
+    }
+
+    fun removeFromFocus(focusBlockIds: List<String>) {
+        if (focusBlockIds.isEmpty()) return
+        storeOpenDocuments()
+        rememberForUndo("Removed from focus")
+        focusBlocks = focusBlocksWithout(focusBlocks, focusBlockIds)
+        focusChanged()
+    }
+
+    fun clearFocus() {
+        if (focusBlocks.isEmpty()) return
+        rememberForUndo("Cleared current focus")
+        focusBlocks = emptyList()
+        focusChanged()
+    }
+
+    fun moveFocusBlocks(movedBlockIds: List<String>, newParentId: String, indexAmongNewSiblings: Int) {
+        val indexedBlockIds = movedBlockIds.withIndex()
+        changeFocusBlocks("Moved focus blocks", movedBlockIds) { blocksSoFar, movedBlockId ->
+            val indexOfMovedBlock = indexedBlockIds.first { it.value == movedBlockId }.index
+            focusBlocksAfterMoving(blocksSoFar, movedBlockId, newParentId, indexAmongNewSiblings + indexOfMovedBlock)
+        }
+    }
+
+    fun indentFocusBlocks(focusBlockIds: List<String>) =
+        changeFocusBlocks("Indented focus blocks", focusBlockIds, ::focusBlocksAfterIndenting)
+
+    fun outdentFocusBlocks(focusBlockIds: List<String>) =
+        changeFocusBlocks("Outdented focus blocks", focusBlockIds.reversed(), ::focusBlocksAfterOutdenting)
+
+    fun moveFocusBlocksUp(focusBlockIds: List<String>) =
+        changeFocusBlocks("Moved focus blocks up", focusBlockIds) { blocksSoFar, blockId ->
+            focusBlocksAfterShiftingAmongSiblings(blocksSoFar, blockId, -1)
+        }
+
+    fun moveFocusBlocksDown(focusBlockIds: List<String>) =
+        changeFocusBlocks("Moved focus blocks down", focusBlockIds.reversed()) { blocksSoFar, blockId ->
+            focusBlocksAfterShiftingAmongSiblings(blocksSoFar, blockId, 1)
+        }
+
+    fun focusRows(): List<FocusRow> {
+        storeOpenDocuments()
+        return focusBlocks.map { focusBlock ->
+            val documentText = VirtualFileManager.getInstance().findFileByUrl(focusBlock.fileUrl)
+                ?.let { FileDocumentManager.getInstance().getDocument(it)?.text }
+            val blockStart = documentText?.let { locateMarkedText(it, focusBlock.markedText, focusBlock.startOffset) }
+            FocusRow(
+                id = focusBlock.id,
+                parentId = focusBlock.parentId,
+                fileUrl = focusBlock.fileUrl,
+                fileName = focusBlock.fileUrl.substringAfterLast('/'),
+                firstLine = if (documentText != null && blockStart != null) lineNumberAt(documentText, blockStart) else null,
+                lastLine = if (documentText != null && blockStart != null) {
+                    lineNumberAt(documentText, maxOf(blockStart, blockStart + focusBlock.markedText.length - 1))
+                } else {
+                    null
+                },
+                preview = previewOfFocusBlock(focusBlock.markedText),
+                startOffset = blockStart ?: focusBlock.startOffset,
+            )
+        }
+    }
+
+    val focusBlockCount: Int get() = focusBlocks.size
+
+    private fun changeFocusBlocks(
+        description: String,
+        focusBlockIds: List<String>,
+        changeOneBlock: (List<StoredFocusBlock>, String) -> List<StoredFocusBlock>?,
+    ) {
+        storeOpenDocuments()
+        val changedBlocks = focusBlockIds.fold(focusBlocks) { blocksSoFar, blockId -> changeOneBlock(blocksSoFar, blockId) ?: blocksSoFar }
+        if (changedBlocks == focusBlocks) return
+        rememberForUndo(description)
+        focusBlocks = changedBlocks
+        focusChanged()
+    }
+
+    private fun newFocusBlockUnlessAlreadyInFocus(fileUrl: String, blockRange: TextRange): StoredFocusBlock? {
+        val alreadyInFocus = focusBlocks.any { focusBlock ->
+            focusBlock.fileUrl == fileUrl &&
+                TextRange(focusBlock.startOffset, focusBlock.startOffset + focusBlock.markedText.length).intersectsStrict(blockRange)
+        }
+        if (alreadyInFocus) return null
+        val file = VirtualFileManager.getInstance().findFileByUrl(fileUrl) ?: return null
+        val document = FileDocumentManager.getInstance().getDocument(file) ?: return null
+        return StoredFocusBlock(
+            id = newFocusBlockId(),
+            fileUrl = fileUrl,
+            startOffset = blockRange.startOffset,
+            markedText = document.getText(blockRange),
+        )
+    }
+
+    private fun focusChanged() {
+        FileEditorManager.getInstance(project).openFiles.forEach { openFile ->
+            val openDocument = FileDocumentManager.getInstance().getCachedDocument(openFile) ?: return@forEach
+            showFocusOf(openDocument, openFile)
+        }
+        announceReviewStateChanged()
+    }
+
+    private fun showFocusOf(document: Document, file: VirtualFile) {
+        FocusHighlighters.removeAll(project, document)
+        focusBlocks.filter { it.fileUrl == file.url }.forEach { focusBlock ->
+            val blockStart = locateMarkedText(document.text, focusBlock.markedText, focusBlock.startOffset) ?: return@forEach
+            FocusHighlighters.add(project, document, TextRange(blockStart, blockStart + focusBlock.markedText.length), focusBlock.id)
+        }
+    }
+
+    private fun storeFocusOf(document: Document, file: VirtualFile) {
+        val liveFocusMarkById = FocusHighlighters.inDocument(project, document).associateBy { it.focusBlockId }
+        focusBlocks = focusBlocks.map { focusBlock ->
+            val liveFocusMark = liveFocusMarkById[focusBlock.id]
+            if (focusBlock.fileUrl != file.url || liveFocusMark == null) {
+                focusBlock
+            } else {
+                focusBlock.copy(startOffset = liveFocusMark.range.startOffset, markedText = document.getText(liveFocusMark.range))
+            }
+        }
+    }
+
+    private fun previewOfFocusBlock(markedText: String): String {
+        val firstCodeLine = markedText.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty()
+        return if (firstCodeLine.length > FOCUS_PREVIEW_LENGTH) firstCodeLine.take(FOCUS_PREVIEW_LENGTH) + "…" else firstCodeLine
+    }
+
     private fun documentShowingMarks(fileUrl: String): Document? {
         val file = VirtualFileManager.getInstance().findFileByUrl(fileUrl) ?: return null
         val document = FileDocumentManager.getInstance().getDocument(file) ?: return null
@@ -254,6 +399,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         storedMarksByFileUrl.putAll(snapshot.marks.groupBy { it.fileUrl })
         storedNotesByFileUrl.clear()
         storedNotesByFileUrl.putAll(snapshot.notes.groupBy { it.fileUrl })
+        focusBlocks = snapshot.focus.map { it.copy() }
         showStoredMarksAgainInOpenDocuments()
         afterChangesUpdate.request()
         announceReviewStateChanged()
@@ -274,6 +420,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             notes = storedNotesByFileUrl.values.flatten().toMutableList(),
             lastStop = lastStop,
             pullRequest = pullRequest,
+            focus = focusBlocks.toMutableList(),
         )
         val marksOfNewBranch = marksOfOtherBranches.remove(newBranch) ?: StoredBranchMarks(branch = newBranch)
         storedMarksByFileUrl.clear()
@@ -282,6 +429,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         storedNotesByFileUrl.putAll(marksOfNewBranch.notes.groupBy { it.fileUrl })
         lastStop = marksOfNewBranch.lastStop
         pullRequest = marksOfNewBranch.pullRequest
+        focusBlocks = marksOfNewBranch.focus.toList()
         undoSnapshots.clear()
         activeBranch = newBranch
         showStoredMarksAgainInOpenDocuments()
@@ -294,6 +442,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             val openDocument = FileDocumentManager.getInstance().getCachedDocument(openFile) ?: return@forEach
             ReviewedMarkHighlighters.remove(project, openDocument, ReviewedMarkHighlighters.inDocument(project, openDocument))
             ReviewNoteHighlighters.inDocument(project, openDocument).forEach { ReviewNoteHighlighters.remove(project, openDocument, it) }
+            FocusHighlighters.removeAll(project, openDocument)
             openDocument.putUserData(DOCUMENT_SHOWS_STORED_MARKS, false)
             showStoredMarks(openDocument, openFile)
         }
@@ -307,6 +456,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
                 description = description,
                 marks = storedMarksByFileUrl.values.flatten().map { it.copy() },
                 notes = storedNotesByFileUrl.values.flatten().map { it.copy() },
+                focus = focusBlocks.map { it.copy() },
             ),
         )
         if (undoSnapshots.size > MOST_UNDO_STEPS) undoSnapshots.removeFirst()
@@ -360,6 +510,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             }
         }
         val movedNoteCount = showStoredNotes(document, file)
+        showFocusOf(document, file)
         storeMarksOf(document, file)
         unplacedText(file.name, removedMarkCount, movedNoteCount)?.let { showReviewMarksMessage(project, it, soundName = null) }
         showFloatingNotesOf(document)
@@ -490,6 +641,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             storedMarksByFileUrl[file.url] = marksInDocument
         }
         storeNotesOf(document, file)
+        storeFocusOf(document, file)
     }
 
     override fun getState(): ReviewMarksState {
@@ -503,6 +655,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
             pullRequest = pullRequest,
             branch = activeBranch.orEmpty(),
             otherBranches = marksOfOtherBranches.values.map { it.copy() }.toMutableList(),
+            focus = focusBlocks.toMutableList(),
         )
     }
 
@@ -518,6 +671,7 @@ class ReviewMarksService(private val project: Project) : PersistentStateComponen
         activeBranch = state.branch.ifEmpty { null }
         marksOfOtherBranches.clear()
         marksOfOtherBranches.putAll(state.otherBranches.associateBy { it.branch })
+        focusBlocks = state.focus.toList()
         undoSnapshots.clear()
     }
 

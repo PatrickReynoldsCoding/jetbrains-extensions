@@ -2,6 +2,7 @@ package com.patrickreynolds.reviewmarks
 
 import com.intellij.openapi.components.service
 import com.intellij.openapi.options.BoundConfigurable
+import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.dsl.builder.COLUMNS_LARGE
 import com.intellij.ui.dsl.builder.bindIntText
@@ -18,8 +19,14 @@ private const val MOST_FOCUS_ALERT_COOLDOWN_SECONDS = 3600
 
 class ReviewMarksConfigurable : BoundConfigurable("Review Marks") {
 
+    override fun apply() {
+        super.apply()
+        ProjectManager.getInstance().openProjects.forEach { it.messageBus.syncPublisher(ReviewStateListener.TOPIC).reviewStateChanged() }
+    }
+
     override fun createPanel(): DialogPanel {
         val settingsState = service<ReviewMarksSettings>().state
+        val sidebarTabsEditor = SidebarTabsEditor()
         return panel {
             group("Pomodoro") {
                 row("Review for this many minutes:") {
@@ -64,6 +71,22 @@ class ReviewMarksConfigurable : BoundConfigurable("Review Marks") {
                     checkBox("Sync sidebar with editor (highlight and scroll)")
                         .bindSelected(settingsState::syncSidebarWithEditor)
                         .comment("Highlight the open file, and the block under a click, in the To review and Reviewed tabs.")
+                }
+            }
+            group("Sidebar tabs") {
+                row {
+                    cell(sidebarTabsEditor)
+                        .onReset { sidebarTabsEditor.load(settingsState.sidebarTabOrder, settingsState.hiddenSidebarTabs) }
+                        .onIsModified {
+                            sidebarTabsEditor.orderNames() != sidebarTabsInOrder(settingsState.sidebarTabOrder).map { it.name } ||
+                                sidebarTabsEditor.hiddenTabNames() != sidebarTabsInOrder(settingsState.sidebarTabOrder)
+                                    .map { it.name }.filter { it in settingsState.hiddenSidebarTabs }
+                        }
+                        .onApply {
+                            settingsState.sidebarTabOrder = sidebarTabsEditor.orderNames()
+                            settingsState.hiddenSidebarTabs = sidebarTabsEditor.hiddenTabNames()
+                        }
+                        .comment("Tick the tabs to show and use the arrows to move them. You can also right-click a tab in the sidebar.")
                 }
             }
             group("Review from git") {

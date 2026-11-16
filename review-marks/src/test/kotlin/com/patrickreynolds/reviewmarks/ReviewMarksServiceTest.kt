@@ -752,6 +752,62 @@ class ReviewMarksServiceTest : BasePlatformTestCase() {
         assertEquals(emptyList<Triple<MarkState, Int, Int>>(), marks(document))
     }
 
+    private fun focusHighlightRanges(document: Document) =
+        FocusHighlighters.inDocument(project, document).map { it.range }.sortedBy { it.startOffset }
+
+    private fun nestedFocusIds(): List<Pair<String, String>> = reviewMarks().focusRows().map { it.preview to it.parentId }
+
+    fun `test a block added to focus is highlighted and the same block is not added twice`() {
+        val document = openDocumentWithLinesTwoToFourToReview()
+        val lineTwoRange = TextRange(lineTwoStart, lineTwoStart + "line two".length)
+        val fileUrl = myFixture.file.virtualFile.url
+
+        val firstAddCount = reviewMarks().addToFocus(listOf(fileUrl to lineTwoRange))
+        val secondAddCount = reviewMarks().addToFocus(listOf(fileUrl to lineTwoRange))
+
+        assertEquals(1, firstAddCount)
+        assertEquals(0, secondAddCount)
+        assertEquals(listOf(lineTwoRange), focusHighlightRanges(document))
+    }
+
+    fun `test a focus block nested under another keeps its place when the branch changes and comes back`() {
+        val document = openDocumentWithLinesTwoToFourToReview()
+        val fileUrl = myFixture.file.virtualFile.url
+        reviewMarks().switchToBranch("feature-a")
+        reviewMarks().addToFocus(listOf(fileUrl to TextRange(lineTwoStart, lineTwoStart + "line two".length)))
+        reviewMarks().addToFocus(listOf(fileUrl to TextRange(lineThreeStart, lineThreeEnd)))
+        reviewMarks().indentFocusBlocks(listOf(reviewMarks().focusRows().last().id))
+
+        reviewMarks().switchToBranch("feature-b")
+
+        assertEquals(emptyList<TextRange>(), focusHighlightRanges(document))
+        reviewMarks().switchToBranch("feature-a")
+        val firstBlockId = reviewMarks().focusRows().first().id
+        assertEquals(listOf("line two" to "", "line three" to firstBlockId), nestedFocusIds())
+        assertEquals(2, focusHighlightRanges(document).size)
+    }
+
+    fun `test removing a block from focus removes its highlight and undo brings it back`() {
+        val document = openDocumentWithLinesTwoToFourToReview()
+        reviewMarks().addToFocus(listOf(myFixture.file.virtualFile.url to TextRange(lineTwoStart, lineThreeEnd)))
+
+        reviewMarks().removeFromFocus(listOf(reviewMarks().focusRows().single().id))
+
+        assertEquals(emptyList<TextRange>(), focusHighlightRanges(document))
+        reviewMarks().undoLastClear()
+        assertEquals(listOf(TextRange(lineTwoStart, lineThreeEnd)), focusHighlightRanges(document))
+    }
+
+    fun `test the focus highlight follows the code when text is typed above it`() {
+        val document = openDocumentWithLinesTwoToFourToReview()
+        reviewMarks().addToFocus(listOf(myFixture.file.virtualFile.url to TextRange(lineThreeStart, lineThreeEnd)))
+
+        edit { document.insertString(0, "new first line\n") }
+
+        val shift = "new first line\n".length
+        assertEquals(listOf(TextRange(lineThreeStart + shift, lineThreeEnd + shift)), focusHighlightRanges(document))
+    }
+
     fun `test each branch keeps its own marks and notes`() {
         val document = openDocumentWithLinesTwoToFourReviewed()
         addNoteOnLine(document, lineThreeStart, plainNote)

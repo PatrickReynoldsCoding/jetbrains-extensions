@@ -49,6 +49,8 @@ import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.BoxLayout
+import javax.swing.DropMode
+import javax.swing.JMenu
 import javax.swing.Icon
 import javax.swing.JButton
 import javax.swing.JComponent
@@ -61,16 +63,12 @@ import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreeCellRenderer
 import javax.swing.tree.TreeSelectionModel
 
-private const val TO_REVIEW_TAB = 0
-private const val REVIEWED_TAB = 1
-private const val NOTES_TAB = 2
-private const val TODAY_TAB = 3
-
 private const val ACTION_PLACE = "ReviewMarksToolWindow"
 private const val FROM_GIT_MENU_ID = "ReviewMarks.FromGitMenu"
 private const val POMODORO_CLOCK_MILLISECONDS = 15_000
 private const val REMOVE_LABEL = "Remove"
-private const val FIRST_TICK_MENU_ITEM = 3
+private const val ADD_TO_FOCUS_LABEL = "Add to focus"
+private const val FIRST_TICK_MENU_ITEM = 4
 
 enum class BlockTab(val changeStateLabel: String, val changeStateColor: Color) {
     TO_REVIEW("Mark reviewed", REVIEWED_ACCENT),
@@ -108,6 +106,11 @@ class ReviewMarksPanel(
     private val finishBreakButton = JButton("Finish break", AllIcons.Actions.Checked)
     private val pomodoroStatusLabel = JBLabel()
     private val collapsedNoteKinds = mutableSetOf<NoteKind>()
+    private val focusTree = createTree(FocusTreeCellRenderer())
+    private val focusHeadingLabel = JBLabel()
+    private val tabContents = mutableMapOf<SidebarTab, JComponent>()
+    private var shownTabs: List<SidebarTab> = emptyList()
+    private var rebuildingTabs = false
 
     private var refreshingFromState = false
 
@@ -128,7 +131,8 @@ class ReviewMarksPanel(
             refreshProgress()
             refreshAllMarkedCode()
             refreshUndo()
-            refreshNotesTabTitle()
+            showSidebarTabs()
+            refreshTabTitles()
             refreshSelectedTab()
         } finally {
             refreshingFromState = false
@@ -232,15 +236,18 @@ class ReviewMarksPanel(
     }
 
     private fun createTabs(): JBTabbedPane {
-        tabs.addTab("To review", createBlocksTab(toReviewTree, toReviewHeadingLabel, BlockTab.TO_REVIEW))
-        tabs.addTab("Reviewed", createBlocksTab(reviewedTree, reviewedHeadingLabel, BlockTab.REVIEWED))
-        tabs.addTab("Notes", createNotesTab())
-        tabs.addTab("Today", JBScrollPane(todayText))
+        tabContents[SidebarTab.TO_REVIEW] = createBlocksTab(toReviewTree, toReviewHeadingLabel, BlockTab.TO_REVIEW)
+        tabContents[SidebarTab.REVIEWED] = createBlocksTab(reviewedTree, reviewedHeadingLabel, BlockTab.REVIEWED)
+        tabContents[SidebarTab.NOTES] = createNotesTab()
+        tabContents[SidebarTab.CURRENT_FOCUS] = createFocusTab()
+        tabContents[SidebarTab.TODAY] = JBScrollPane(todayText)
         todayText.isEditable = false
         todayText.lineWrap = true
         todayText.wrapStyleWord = true
         todayText.border = JBUI.Borders.empty(8)
-        tabs.addChangeListener { refreshSelectedTab() }
+        showSidebarTabs()
+        tabs.addChangeListener { if (!rebuildingTabs) refreshSelectedTab() }
+        onRightClickOnTabHeader()
 
         toReviewTree.emptyText.text = "Nothing marked to review. Select code and press To review."
         reviewedTree.emptyText.text = "Nothing marked as reviewed yet."
@@ -251,6 +258,179 @@ class ReviewMarksPanel(
         return tabs
     }
 
+    private fun selectedTab(): SidebarTab? = shownTabs.getOrNull(tabs.selectedIndex)
+
+    private fun showSidebarTabs() {
+        val settingsState = service<ReviewMarksSettings>().state
+        val tabsToShow = visibleSidebarTabs(settingsState.sidebarTabOrder, settingsState.hiddenSidebarTabs)
+        if (tabsToShow == shownTabs) return
+        val tabSelectedBefore = selectedTab()
+        rebuildingTabs = true
+        try {
+            tabs.removeAll()
+            tabsToShow.forEach { tabs.addTab(it.title, tabContents.getValue(it)) }
+            tabs.selectedIndex = tabsToShow.indexOf(tabSelectedBefore).coerceAtLeast(0)
+        } finally {
+            rebuildingTabs = false
+        }
+        shownTabs = tabsToShow
+        refreshTabTitles()
+    }
+
+    private fun refreshTabTitles() {
+        shownTabs.forEachIndexed { tabIndex, tab ->
+            tabs.setTitleAt(
+                tabIndex,
+                when (tab) {
+                    SidebarTab.NOTES -> "Notes (${reviewMarks.allNotes().size})"
+                    SidebarTab.CURRENT_FOCUS -> "Current focus (${reviewMarks.focusBlockCount})"
+                    else -> tab.title
+                },
+            )
+        }
+    }
+
+    fun tabMenuItems(tab: SidebarTab): List<JMenuItem> {
+        val settingsState = service<ReviewMarksSettings>().state
+        val hideItem = JMenuItem("Hide this tab")
+        hideItem.isEnabled = shownTabs.size > 1
+        hideItem.addActionListener {
+            settingsState.hiddenSidebarTabs = sidebarTabsHiddenAfterHiding(tab, settingsState.sidebarTabOrder, settingsState.hiddenSidebarTabs).toMutableList()
+            refresh()
+        }
+        val moveLeftItem = JMenuItem("Move left")
+        moveLeftItem.isEnabled = shownTabs.indexOf(tab) > 0
+        moveLeftItem.addActionListener { moveTab(tab, -1) }
+        val moveRightItem = JMenuItem("Move right")
+        moveRightItem.isEnabled = shownTabs.indexOf(tab) < shownTabs.size - 1
+        moveRightItem.addActionListener { moveTab(tab, 1) }
+        val hiddenTabs = sidebarTabsInOrder(settingsState.sidebarTabOrder).filter { it.name in settingsState.hiddenSidebarTabs }
+        val showMenu = JMenu("Show hidden tab")
+        showMenu.isEnabled = hiddenTabs.isNotEmpty()
+        hiddenTabs.forEach { hiddenTab ->
+            val showItem = JMenuItem(hiddenTab.title)
+            showItem.addActionListener {
+                settingsState.hiddenSidebarTabs = settingsState.hiddenSidebarTabs.filter { it != hiddenTab.name }.toMutableList()
+                refresh()
+            }
+            showMenu.add(showItem)
+        }
+        val settingsItem = JMenuItem("Tab settings…")
+        settingsItem.addActionListener { openSettings() }
+        return listOf(hideItem, moveLeftItem, moveRightItem, showMenu, settingsItem)
+    }
+
+    private fun moveTab(tab: SidebarTab, visibleTabsToShift: Int) {
+        val settingsState = service<ReviewMarksSettings>().state
+        settingsState.sidebarTabOrder =
+            sidebarTabOrderAfterMoving(settingsState.sidebarTabOrder, tab, visibleTabsToShift, settingsState.hiddenSidebarTabs).toMutableList()
+        refresh()
+    }
+
+    private fun onRightClickOnTabHeader() {
+        val showMenuOnPopupTrigger = { event: MouseEvent ->
+            val tabIndex = tabs.indexAtLocation(event.x, event.y)
+            val tab = shownTabs.getOrNull(tabIndex)
+            if (event.isPopupTrigger && tab != null) {
+                val menu = JBPopupMenu()
+                tabMenuItems(tab).forEach { menu.add(it) }
+                menu.show(tabs, event.x, event.y)
+            }
+        }
+        tabs.addMouseListener(object : MouseAdapter() {
+            override fun mousePressed(event: MouseEvent) = showMenuOnPopupTrigger(event)
+
+            override fun mouseReleased(event: MouseEvent) = showMenuOnPopupTrigger(event)
+        })
+    }
+
+    private fun createFocusTab(): JBPanel<*> {
+        focusTree.emptyText.text = "Nothing in focus. Tick blocks in To review or Reviewed and press Add to focus."
+        focusTree.dragEnabled = true
+        focusTree.dropMode = DropMode.ON_OR_INSERT
+        focusTree.transferHandler = FocusTreeTransferHandler(
+            focusTree = focusTree,
+            selectedFocusBlockIds = { selectedFocusBlockIds() },
+            moveFocusBlocks = { movedBlockIds, newParentId, indexAmongNewSiblings ->
+                reviewMarks.moveFocusBlocks(movedBlockIds, newParentId, indexAmongNewSiblings)
+                refresh()
+            },
+        )
+        focusTree.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(event: MouseEvent) {
+                if (event.clickCount == 2) openSelectedFocusBlock()
+            }
+        })
+        onDeleteKey(focusTree) { removeSelectedFromFocus() }
+
+        val moveUpButton = focusButton("Up", AllIcons.Actions.MoveUp, "Move the selected blocks up among the blocks next to them.") { reviewMarks.moveFocusBlocksUp(selectedFocusBlockIds()) }
+        val moveDownButton = focusButton("Down", AllIcons.Actions.MoveDown, "Move the selected blocks down among the blocks next to them.") { reviewMarks.moveFocusBlocksDown(selectedFocusBlockIds()) }
+        val nestButton = focusButton("Nest", AllIcons.Actions.Forward, "Put the selected blocks under the block above them. You can also drag a block onto another.") { reviewMarks.indentFocusBlocks(selectedFocusBlockIds()) }
+        val unnestButton = focusButton("Un-nest", AllIcons.Actions.Back, "Move the selected blocks out of the block they are under.") { reviewMarks.outdentFocusBlocks(selectedFocusBlockIds()) }
+        val removeButton = focusButton(REMOVE_LABEL, AllIcons.Actions.Close, "Remove the selected blocks, and the blocks under them, from focus. Undo brings them back.") { removeSelectedFromFocus() }
+        val clearAllButton = focusButton("Clear all", null, "Remove every block from focus. Undo brings them back.") { reviewMarks.clearFocus() }
+        val selectionButtons = listOf(moveUpButton, moveDownButton, nestButton, unnestButton, removeButton)
+        focusTree.addTreeSelectionListener { selectionButtons.forEach { it.isEnabled = focusTree.selectionCount > 0 } }
+        selectionButtons.forEach { it.isEnabled = false }
+
+        val buttons = JBPanel<JBPanel<*>>(WrapLayout(FlowLayout.RIGHT, 4, 0))
+        (selectionButtons + clearAllButton).forEach { buttons.add(it) }
+        val headingRow = JBPanel<JBPanel<*>>(BorderLayout())
+        headingRow.border = JBUI.Borders.empty(2, 6)
+        headingRow.add(focusHeadingLabel, BorderLayout.NORTH)
+        headingRow.add(buttons, BorderLayout.CENTER)
+
+        val focusTab = JBPanel<JBPanel<*>>(BorderLayout())
+        focusTab.add(headingRow, BorderLayout.NORTH)
+        focusTab.add(JBScrollPane(focusTree), BorderLayout.CENTER)
+        return focusTab
+    }
+
+    private fun focusButton(label: String, icon: Icon?, tooltip: String, change: () -> Unit): JButton {
+        val button = if (icon == null) JButton(label) else JButton(label, icon)
+        button.toolTipText = tooltip
+        button.addActionListener {
+            change()
+            refresh()
+        }
+        return button
+    }
+
+    private fun focusRowsOfSelection(): List<FocusRow> =
+        focusTree.selectionPaths.orEmpty()
+            .sortedBy { focusTree.getRowForPath(it) }
+            .mapNotNull { (it.lastPathComponent as? DefaultMutableTreeNode)?.userObject as? FocusRow }
+
+    private fun selectedFocusBlockIds(): List<String> = focusRowsOfSelection().map { it.id }
+
+    private fun removeSelectedFromFocus() {
+        reviewMarks.removeFromFocus(selectedFocusBlockIds())
+        refresh()
+    }
+
+    private fun openSelectedFocusBlock() {
+        val focusRow = focusRowsOfSelection().firstOrNull() ?: return
+        reviewMarks.goToBlock(focusRow.fileUrl, focusRow.startOffset)
+    }
+
+    private fun showFocus() {
+        val focusRows = reviewMarks.focusRows()
+        val idsSelectedBefore = selectedFocusBlockIds().toSet()
+        focusHeadingLabel.text = if (focusRows.isEmpty()) "" else "${focusRows.size} blocks in focus. Drag a block onto another to nest it."
+        val root = DefaultMutableTreeNode()
+        focusRows.filter { it.parentId == TOP_LEVEL_FOCUS_PARENT_ID }.forEach { root.add(focusNodeOf(it, focusRows)) }
+        (focusTree.model as DefaultTreeModel).setRoot(root)
+        TreeUtil.expandAll(focusTree)
+        val nodesToSelect = nodesOf(focusTree).filter { (it.userObject as? FocusRow)?.id in idsSelectedBefore }
+        focusTree.selectionPaths = nodesToSelect.map { TreeUtil.getPathFromRoot(it) }.toTypedArray()
+    }
+
+    private fun focusNodeOf(focusRow: FocusRow, allFocusRows: List<FocusRow>): DefaultMutableTreeNode {
+        val node = DefaultMutableTreeNode(focusRow)
+        allFocusRows.filter { it.parentId == focusRow.id }.forEach { node.add(focusNodeOf(it, allFocusRows)) }
+        return node
+    }
+
     private fun createBlocksTab(tree: CheckboxTree, headingLabel: JBLabel, blockTab: BlockTab): JBPanel<*> {
         val changeStateButton = JButton(blockTab.changeStateLabel, DotIcon(blockTab.changeStateColor))
         changeStateButton.toolTipText = "${blockTab.changeStateLabel}: the ticked blocks, or the selected rows if none are ticked."
@@ -259,20 +439,29 @@ class ReviewMarksPanel(
         removeButton.toolTipText = "Remove the marks of the ticked blocks, or the selected rows if none are ticked. Undo brings them back."
         removeButton.addActionListener { removeBlocks(tree) }
         val buttons = JBPanel<JBPanel<*>>(WrapLayout(FlowLayout.RIGHT, 4, 0))
+        val addToFocusButton = JButton(ADD_TO_FOCUS_LABEL, DotIcon(FOCUS_ACCENT))
+        addToFocusButton.toolTipText = "Add the ticked blocks, or the selected rows if none are ticked, to Current focus. They are highlighted red in the editor."
+        addToFocusButton.addActionListener { addBlocksToFocus(tree) }
         buttons.add(changeStateButton)
         buttons.add(removeButton)
+        buttons.add(addToFocusButton)
+        val clearAllButton = JButton("Clear all")
         if (blockTab == BlockTab.REVIEWED) {
-            val clearAllButton = JButton("Clear all")
             clearAllButton.addActionListener { confirmAndClearAllMarks() }
-            buttons.add(clearAllButton)
+        } else {
+            clearAllButton.toolTipText = "Remove every block listed here. Reviewed marks are kept. Undo brings them back."
+            clearAllButton.addActionListener { confirmAndClearAllBlocksOf(tree) }
         }
+        buttons.add(clearAllButton)
         fun refreshButtonCounts() {
             val blockCount = targetBlocks(tree).size
             val countText = if (blockCount == 0) "" else " ($blockCount)"
             changeStateButton.text = blockTab.changeStateLabel + countText
             removeButton.text = REMOVE_LABEL + countText
+            addToFocusButton.text = ADD_TO_FOCUS_LABEL + countText
             changeStateButton.isEnabled = blockCount > 0
             removeButton.isEnabled = blockCount > 0
+            addToFocusButton.isEnabled = blockCount > 0
         }
         tree.addCheckboxTreeListener(object : CheckboxTreeListener {
             override fun nodeStateChanged(node: CheckedTreeNode) = refreshButtonCounts()
@@ -305,12 +494,14 @@ class ReviewMarksPanel(
         changeStateItem.addActionListener { changeStateOfBlocks(tree, blockTab) }
         val removeItem = JMenuItem("$REMOVE_LABEL: $countText", AllIcons.Actions.Close)
         removeItem.addActionListener { removeBlocks(tree) }
+        val addToFocusItem = JMenuItem("$ADD_TO_FOCUS_LABEL: $countText", DotIcon(FOCUS_ACCENT))
+        addToFocusItem.addActionListener { addBlocksToFocus(tree) }
         val tickAllItem = JMenuItem("Tick all")
         tickAllItem.addActionListener { setAllTicked(tree, true) }
         val untickAllItem = JMenuItem("Untick all")
         untickAllItem.addActionListener { setAllTicked(tree, false) }
-        listOf(changeStateItem, removeItem).forEach { it.isEnabled = blockCount > 0 }
-        return listOf(openItem, changeStateItem, removeItem, tickAllItem, untickAllItem)
+        listOf(changeStateItem, removeItem, addToFocusItem).forEach { it.isEnabled = blockCount > 0 }
+        return listOf(openItem, changeStateItem, removeItem, addToFocusItem, tickAllItem, untickAllItem)
     }
 
     private fun showBlockMenu(tree: CheckboxTree, blockTab: BlockTab, event: MouseEvent) {
@@ -340,6 +531,26 @@ class ReviewMarksPanel(
         val root = tree.model.root as? CheckedTreeNode ?: return
         tree.setNodeState(root, ticked)
         tree.repaint()
+    }
+
+    private fun allBlocksOf(tree: CheckboxTree): List<BlockOfFile> {
+        val root = tree.model.root as? DefaultMutableTreeNode ?: return emptyList()
+        return root.depthFirstEnumeration().toList().mapNotNull { (it as DefaultMutableTreeNode).userObject as? BlockOfFile }
+    }
+
+    private fun confirmAndClearAllBlocksOf(tree: CheckboxTree) {
+        val blocks = allBlocksOf(tree)
+        if (blocks.isEmpty()) return
+        val blockCountText = if (blocks.size == 1) "the 1 block" else "all ${blocks.size} blocks"
+        val confirmed = Messages.showYesNoDialog(
+            project,
+            "Remove $blockCountText listed under To review? Reviewed marks and notes are kept.",
+            "Clear All To Review",
+            null,
+        ) == Messages.YES
+        if (!confirmed) return
+        reviewMarks.clearMarkedBlocks(blockRangesOf(blocks))
+        refresh()
     }
 
     private fun confirmAndClearAllMarks() {
@@ -451,7 +662,7 @@ class ReviewMarksPanel(
         val pomodoroClock = Timer(POMODORO_CLOCK_MILLISECONDS) {
             if (!isShowing) return@Timer
             refreshPomodoro()
-            if (tabs.selectedIndex == NOTES_TAB) refreshSelectedTab()
+            if (selectedTab() == SidebarTab.NOTES) refreshSelectedTab()
         }
         pomodoroClock.start()
         Disposer.register(parentDisposable) { pomodoroClock.stop() }
@@ -497,16 +708,14 @@ class ReviewMarksPanel(
         undoButton.text = "Undo: ${undoDescription.orEmpty()}"
     }
 
-    private fun refreshNotesTabTitle() {
-        tabs.setTitleAt(NOTES_TAB, "Notes (${reviewMarks.allNotes().size})")
-    }
-
     private fun refreshSelectedTab() {
-        when (tabs.selectedIndex) {
-            TO_REVIEW_TAB -> showBlocks(toReviewTree, toReviewHeadingLabel, reviewMarks.blocksToReview())
-            REVIEWED_TAB -> showBlocks(reviewedTree, reviewedHeadingLabel, reviewMarks.reviewedBlocks())
-            NOTES_TAB -> showNotes(reviewMarks.allNotes())
-            TODAY_TAB -> todayText.text = reviewMarks.reviewSummaryToday().text()
+        when (selectedTab()) {
+            SidebarTab.TO_REVIEW -> showBlocks(toReviewTree, toReviewHeadingLabel, reviewMarks.blocksToReview())
+            SidebarTab.REVIEWED -> showBlocks(reviewedTree, reviewedHeadingLabel, reviewMarks.reviewedBlocks())
+            SidebarTab.NOTES -> showNotes(reviewMarks.allNotes())
+            SidebarTab.CURRENT_FOCUS -> showFocus()
+            SidebarTab.TODAY -> todayText.text = reviewMarks.reviewSummaryToday().text()
+            null -> Unit
         }
         syncSidebarWithEditor()
     }
@@ -523,9 +732,9 @@ class ReviewMarksPanel(
         tree.scrollPathToVisible(pathToSelect)
     }
 
-    private fun shownBlockTree(): CheckboxTree? = when (tabs.selectedIndex) {
-        TO_REVIEW_TAB -> toReviewTree
-        REVIEWED_TAB -> reviewedTree
+    private fun shownBlockTree(): CheckboxTree? = when (selectedTab()) {
+        SidebarTab.TO_REVIEW -> toReviewTree
+        SidebarTab.REVIEWED -> reviewedTree
         else -> null
     }
 
@@ -656,6 +865,11 @@ class ReviewMarksPanel(
             BlockTab.TO_REVIEW -> reviewMarks.markBlocksAsReviewed(blockRangesOf(blocks))
             BlockTab.REVIEWED -> reviewMarks.markBlocksToReview(blockRangesOf(blocks))
         }
+        refresh()
+    }
+
+    private fun addBlocksToFocus(tree: CheckboxTree) {
+        reviewMarks.addToFocus(blockRangesOf(targetBlocks(tree)))
         refresh()
     }
 

@@ -18,6 +18,7 @@ class ReviewMarksState(
     var pullRequest: PullRequestSession? = null,
     var branch: String = "",
     var otherBranches: MutableList<StoredBranchMarks> = mutableListOf(),
+    var focus: MutableList<StoredFocusBlock> = mutableListOf(),
 )
 
 data class StoredBranchMarks(
@@ -26,4 +27,5 @@ data class StoredBranchMarks(
     var notes: MutableList<StoredNote> = mutableListOf(),
     var lastStop: StoredStop? = null,
     var pullRequest: PullRequestSession? = null,
+    var focus: MutableList<StoredFocusBlock> = mutableListOf(),
 )
